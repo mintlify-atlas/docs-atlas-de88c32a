@@ -38,11 +38,16 @@ Pad Notes uses [Clerk](https://clerk.com) for authentication and user management
     ```bash .env
     PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
     CLERK_SECRET_KEY=sk_test_...
+    PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL=/dashboard
     ```
 
     <Warning>
       The `PUBLIC_CLERK_PUBLISHABLE_KEY` must start with `PUBLIC_` to be accessible in Astro client-side code.
     </Warning>
+
+    <Info>
+      The optional `PUBLIC_CLERK_SIGN_IN_FORCE_REDIRECT_URL` controls where users are sent after signing in. Set this to `/dashboard` to redirect authenticated users directly to their dashboard.
+    </Info>
   </Step>
 
   <Step title="Configure OAuth providers (optional)">
