@@ -1,0 +1,348 @@
+---
+title: 'Rate Limiting'
+description: 'Configure Upstash Redis rate limiting to protect your Pad Notes API'
+---
+
+## Overview
+
+Pad Notes implements rate limiting using [Upstash Redis](https://upstash.com) to prevent API abuse and ensure fair usage. The application uses different rate limits for read and write operations.
+
+## Rate Limit Configuration
+
+- **Read operations** (GET): 30 requests per 10 seconds
+- **Write operations** (POST, PUT, DELETE): 10 requests per 10 seconds
+
+<Note>
+  Rate limits are applied per user (identified by Clerk `userId`), not per IP address.
+</Note>
+
+## Prerequisites
+
+- Completed [Authentication Setup](/setup/authentication)
+- An Upstash account
+
+## Setup Steps
+
+<Steps>
+  <Step title="Create Upstash account">
+    1. Go to [Upstash](https://upstash.com)
+    2. Sign up for a free account
+    3. Verify your email
+
+    <Note>
+      Upstash offers a generous free tier that's sufficient for development and small production deployments.
+    </Note>
+  </Step>
+
+  <Step title="Create a Redis database">
+    1. In the Upstash console, click **Create Database**
+    2. Name your database "pad-notes-ratelimit"
+    3. Select a region close to your application servers
+    4. Choose **Global** for multi-region replication (recommended for production)
+    5. Click **Create**
+
+    <Warning>
+      For optimal performance, choose the same region as your Turso database and Vercel deployment.
+    </Warning>
+  </Step>
+
+  <Step title="Get Redis credentials">
+    After creating your database, Upstash will display your credentials:
+
+    - **UPSTASH_REDIS_REST_URL** - The REST API endpoint
+    - **UPSTASH_REDIS_REST_TOKEN** - The authentication token
+
+    Copy both values from the database details page.
+  </Step>
+
+  <Step title="Add environment variables">
+    Add your Upstash credentials to `.env`:
+
+    ```bash .env
+    UPSTASH_REDIS_REST_URL=https://your-database.upstash.io
+    UPSTASH_REDIS_REST_TOKEN=AabcD...
+    ```
+  </Step>
+
+  <Step title="Restart development server">
+    Restart your development server to load the new environment variables:
+
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+</Steps>
+
+## Implementation
+
+### Rate Limiter Configuration
+
+The rate limiters are configured in `src/lib/ratelimit.ts`:
+
+```typescript src/lib/ratelimit.ts
+import { Ratelimit } from '@upstash/ratelimit'
+import { Redis } from '@upstash/redis'
+
+// Redis client from environment variables
+const redis = new Redis({
+  url: import.meta.env.UPSTASH_REDIS_REST_URL!,
+  token: import.meta.env.UPSTASH_REDIS_REST_TOKEN!,
+})
+
+// Rate limiter for write operations
+export const writeRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/write',
+})
+
+// Rate limiter for read operations
+export const readRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/read',
+})
+```
+
+### Configuration Options
+
+- **limiter**: `Ratelimit.slidingWindow(limit, window)` - Sliding window algorithm
+  - More accurate than fixed windows
+  - Prevents burst traffic at window boundaries
+- **analytics**: `true` - Enables analytics in Upstash console
+- **prefix**: Namespace for rate limit keys in Redis
+
+### Usage in API Routes
+
+Rate limiting is applied in API routes before processing requests:
+
+#### Read Operations (GET)
+
+```typescript src/pages/api/notes/index.ts
+import { readRatelimit } from '@/lib/ratelimit'
+
+export const GET: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  if (!isAuthenticated) {
+    return new Response(JSON.stringify({ error: 'No autenticado' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Rate limiting
+  const { success, reset } = await readRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    )
+  }
+
+  // Process request...
+}
+```
+
+#### Write Operations (POST, PUT, DELETE)
+
+```typescript src/pages/api/notes/index.ts
+import { writeRatelimit } from '@/lib/ratelimit'
+
+export const POST: APIRoute = async ({ request, locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  if (!isAuthenticated) {
+    return new Response(JSON.stringify({ error: 'No autenticado' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Rate limiting
+  const { success, reset } = await writeRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    )
+  }
+
+  // Process request...
+}
+```
+
+## Rate Limit Response
+
+When a user exceeds the rate limit, the API returns:
+
+**Status Code**: `429 Too Many Requests`
+
+**Response Body**:
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 8
+}
+```
+
+**Headers**:
+- `Retry-After`: Number of seconds until the limit resets
+- `Content-Type`: `application/json`
+
+## Testing Rate Limits
+
+You can test rate limits using curl or your browser's developer tools:
+
+```bash
+# Test read rate limit (30 requests allowed)
+for i in {1..35}; do
+  curl http://localhost:4321/api/notes \
+    -H "Cookie: your-session-cookie"
+  echo "Request $i"
+done
+
+# Request 31-35 should return 429
+```
+
+<Note>
+  Replace `your-session-cookie` with an actual authenticated session cookie from your browser's developer tools.
+</Note>
+
+## Adjusting Rate Limits
+
+To modify rate limits, edit `src/lib/ratelimit.ts`:
+
+```typescript
+// Example: Increase write limit to 20 requests per 10 seconds
+export const writeRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(20, '10 s'),  // Changed from 10 to 20
+  analytics: true,
+  prefix: '@upstash/ratelimit/write',
+})
+```
+
+You can also use different time windows:
+
+```typescript
+// 100 requests per minute
+Ratelimit.slidingWindow(100, '60 s')
+
+// 1000 requests per hour
+Ratelimit.slidingWindow(1000, '3600 s')
+```
+
+## Alternative Rate Limiting Algorithms
+
+Upstash supports multiple rate limiting algorithms:
+
+### Fixed Window
+
+```typescript
+Ratelimit.fixedWindow(10, '10 s')
+```
+
+Simpler but can allow bursts at window boundaries.
+
+### Token Bucket
+
+```typescript
+Ratelimit.tokenBucket(10, '1 s', 10)
+```
+
+Allows short bursts while maintaining average rate.
+
+### Sliding Logs
+
+```typescript
+Ratelimit.slidingLogs(10, '10 s')
+```
+
+Most accurate but higher memory usage.
+
+## Monitoring
+
+### Upstash Console
+
+1. Go to your Upstash database dashboard
+2. Click the **Analytics** tab
+3. View rate limit metrics:
+   - Request count
+   - Blocked requests
+   - Success rate
+   - Usage patterns
+
+### Application Logs
+
+Rate limit events are logged in your application console. In production, consider:
+
+- Sending 429 responses to a monitoring service
+- Alerting on high rate limit hit rates
+- Analyzing patterns to adjust limits
+
+## Troubleshooting
+
+### "Failed to connect to Upstash"
+
+Verify your environment variables are correct:
+
+```bash
+echo $UPSTASH_REDIS_REST_URL
+echo $UPSTASH_REDIS_REST_TOKEN
+```
+
+Ensure you've restarted your dev server after adding them.
+
+### Rate limits not enforcing
+
+Check that:
+1. Rate limiting code is called before processing requests
+2. The `userId` is correctly passed to `limit(userId)`
+3. Redis is accessible (check Upstash console)
+
+### Too many false positives
+
+If legitimate users are being rate limited:
+- Increase the rate limit values
+- Consider using longer time windows
+- Implement exponential backoff in your client
+
+## Best Practices
+
+<Note>
+  **Client-Side Handling**: Implement exponential backoff when receiving 429 responses to avoid hammering the API.
+</Note>
+
+<Warning>
+  **Production Considerations**: Monitor rate limit metrics in production and adjust limits based on actual usage patterns.
+</Warning>
+
+- Use different limits for different operation types (read vs write)
+- Log rate limit events for analysis
+- Display user-friendly messages when limits are hit
+- Consider implementing rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`)
+
+## Next Steps
+
+- [Deployment](/setup/deployment) - Deploy your application to production

@@ -1,0 +1,434 @@
+---
+title: Database Schema
+description: Complete database schema documentation for Pad Notes
+---
+
+Pad Notes uses a simple, normalized schema optimized for Turso's edge-replicated SQLite architecture. This page documents the complete database structure.
+
+## Overview
+
+The application uses a single `notes` table to store user notes. The schema is defined using Drizzle ORM with full TypeScript type inference.
+
+## Schema Definition
+
+The complete schema is located at `client/src/db/schema.ts`:
+
+```ts
+import { sql } from 'drizzle-orm'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: text('id')
+      .primaryKey()
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    textNote: text('text_note').notNull(),
+    userId: text('user_id').notNull(),
+    createdAt: integer('created_at', {
+      mode: 'timestamp',
+    })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    // Index on userId to optimize queries by user
+    userIdIdx: index('user_id_idx').on(table.userId),
+  }),
+)
+```
+
+## Tables
+
+### `notes`
+
+Stores all user notes with metadata.
+
+#### Columns
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | `text` | PRIMARY KEY, NOT NULL | UUID identifier generated via `crypto.randomUUID()` |
+| `title` | `text` | NOT NULL | Note title (3-100 characters, validated via Zod) |
+| `text_note` | `text` | NOT NULL | Note content (3-400 characters, validated via Zod) |
+| `user_id` | `text` | NOT NULL | Clerk user ID (foreign key reference) |
+| `created_at` | `integer` | NOT NULL, DEFAULT unixepoch() | Unix timestamp of creation |
+| `updated_at` | `integer` | NOT NULL, DEFAULT unixepoch() | Unix timestamp of last update |
+
+#### Indexes
+
+**`user_id_idx`** - Index on `user_id` column
+- **Purpose**: Optimize queries filtering notes by user
+- **Query pattern**: `SELECT * FROM notes WHERE user_id = ?`
+- **Impact**: Enables fast lookup of user notes without table scan
+
+```ts
+// Query that benefits from this index
+const userNotes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))
+```
+
+## Data Types
+
+### UUID Generation
+
+The `id` column uses **client-side UUID generation** via the Web Crypto API:
+
+```ts
+id: text('id')
+  .primaryKey()
+  .notNull()
+  .$defaultFn(() => crypto.randomUUID())
+```
+
+**Why UUIDs instead of auto-incrementing integers?**
+- **Security**: Non-sequential IDs prevent enumeration attacks
+- **Distributed systems**: No coordination needed for ID generation
+- **Client-side generation**: No database round-trip for ID assignment
+- **URL-safe**: Can be used directly in URLs without encoding
+
+### Timestamp Handling
+
+Timestamps are stored as **Unix epoch integers** (seconds since 1970-01-01):
+
+```ts
+createdAt: integer('created_at', {
+  mode: 'timestamp',
+})
+  .notNull()
+  .default(sql`(unixepoch())`)
+```
+
+**Why integers instead of TEXT/DATETIME?**
+- **SQLite native**: `unixepoch()` is a built-in SQLite function
+- **Type safety**: Drizzle's `mode: 'timestamp'` converts to JavaScript `Date` objects
+- **Efficient storage**: 8 bytes vs 19+ bytes for ISO-8601 strings
+- **Easy comparison**: Numeric comparisons for sorting and filtering
+
+**Type inference:**
+```ts
+// Drizzle automatically converts timestamps
+const note = await db.select().from(notes).where(eq(notes.id, noteId))
+console.log(note.createdAt) // Date object, not integer
+```
+
+### Text Fields
+
+All string data uses SQLite's `TEXT` type:
+
+```ts
+title: text('title').notNull()
+textNote: text('text_note').notNull()
+```
+
+**Field naming:**
+- Database: Snake case (`text_note`, `user_id`)
+- TypeScript: Camel case (`textNote`, `userId`)
+
+Drizzle automatically handles case conversion between database and application layers.
+
+## Type Safety
+
+Drizzle generates TypeScript types directly from the schema:
+
+```ts
+// client/src/db/index.ts
+export type Note = typeof schema.notes.$inferSelect
+export type NewNote = typeof schema.notes.$inferInsert
+```
+
+### `Note` Type (Select)
+
+Inferred type for reading notes from the database:
+
+```ts
+type Note = {
+  id: string
+  title: string
+  textNote: string
+  userId: string
+  createdAt: Date
+  updatedAt: Date
+}
+```
+
+### `NewNote` Type (Insert)
+
+Inferred type for inserting new notes:
+
+```ts
+type NewNote = {
+  id?: string // Optional (auto-generated)
+  title: string
+  textNote: string
+  userId: string
+  createdAt?: Date // Optional (database default)
+  updatedAt?: Date // Optional (database default)
+}
+```
+
+**Usage example:**
+```ts
+const [newNote] = await db
+  .insert(notes)
+  .values({
+    title: 'My Note',
+    textNote: 'Note content',
+    userId: 'user_123',
+    // id, createdAt, updatedAt auto-populated
+  })
+  .returning()
+```
+
+## Validation
+
+Database constraints are enforced at two layers:
+
+### 1. Database Layer (Drizzle Schema)
+
+```ts
+title: text('title').notNull()
+```
+
+Enforces:
+- `NOT NULL` constraints
+- Primary key uniqueness
+- Data type validation
+
+### 2. Application Layer (Zod Schemas)
+
+```ts
+// client/src/lib/validations.ts
+export const createNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim(),
+  textNote: z.string().min(3).max(400).trim(),
+})
+
+export const noteIdSchema = z.uuid()
+```
+
+Enforces:
+- String length constraints (3-100 for title, 3-400 for content)
+- UUID format validation for note IDs
+- Automatic whitespace trimming
+
+**API validation example:**
+```ts
+const validation = createNoteSchema.safeParse(body)
+if (!validation.success) {
+  return new Response(
+    JSON.stringify({
+      error: 'Datos inválidos',
+      details: z.flattenError(validation.error).fieldErrors,
+    }),
+    { status: 400 }
+  )
+}
+```
+
+See [API Routes](/api/overview) for complete validation patterns.
+
+## Query Patterns
+
+### Fetch User Notes (Sorted by Last Updated)
+
+```ts
+import { desc, eq } from 'drizzle-orm'
+
+const userNotes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))
+```
+
+**Explanation:**
+- `where(eq(notes.userId, userId))`: Filter by user (uses `user_id_idx` index)
+- `orderBy(desc(notes.updatedAt))`: Sort by most recently updated first
+- Returns: `Note[]` with full type safety
+
+### Create New Note
+
+```ts
+const [newNote] = await db
+  .insert(notes)
+  .values({
+    title: validation.data.title,
+    textNote: validation.data.textNote,
+    userId: userId,
+  })
+  .returning()
+```
+
+**Explanation:**
+- `.returning()`: Returns the inserted row with auto-generated fields
+- Array destructuring: `[newNote]` extracts first (only) result
+- Auto-populated: `id`, `createdAt`, `updatedAt`
+
+### Update Note
+
+```ts
+import { and, eq } from 'drizzle-orm'
+
+const [updated] = await db
+  .update(notes)
+  .set({
+    title: validation.data.title,
+    textNote: validation.data.textNote,
+    updatedAt: new Date(),
+  })
+  .where(
+    and(
+      eq(notes.id, noteId),
+      eq(notes.userId, userId)
+    )
+  )
+  .returning()
+```
+
+**Explanation:**
+- `set()`: Fields to update (must manually update `updatedAt`)
+- `and()`: Ensures note belongs to authenticated user (security)
+- `.returning()`: Returns updated row
+
+### Delete Note
+
+```ts
+await db
+  .delete(notes)
+  .where(
+    and(
+      eq(notes.id, noteId),
+      eq(notes.userId, userId)
+    )
+  )
+```
+
+**Explanation:**
+- Always filter by both `id` and `userId` to prevent unauthorized deletion
+- No `.returning()` needed for delete operations
+
+## Migrations
+
+Drizzle Kit manages schema migrations:
+
+### Generate Migration
+
+```bash
+pnpm drizzle-kit generate
+```
+
+Creates SQL migration files in `./drizzle/` based on schema changes.
+
+### Apply Migration to Turso
+
+```bash
+pnpm drizzle-kit migrate
+```
+
+Executes pending migrations against the Turso database.
+
+### Migration Configuration
+
+```ts
+// drizzle.config.ts
+export default defineConfig({
+  schema: './src/db/schema.ts',
+  out: './drizzle',
+  dialect: 'turso',
+  dbCredentials: {
+    url: process.env.TURSO_DATABASE_URL!,
+    authToken: process.env.TURSO_AUTH_TOKEN!,
+  },
+  verbose: true, // Show detailed logs
+  strict: true,  // Strict schema validation
+})
+```
+
+## Performance Considerations
+
+### Index Strategy
+
+The single index on `user_id` is sufficient because:
+
+- **Most common query**: Fetch all notes for a user
+- **Small dataset**: Users typically have fewer than 1000 notes
+- **Primary key index**: Lookups by `id` are already indexed
+
+**Query performance:**
+- User notes lookup: O(log n) via `user_id_idx`
+- Single note lookup: O(1) via primary key index
+- Update/delete by ID: O(1) via primary key index
+
+### Edge Replication
+
+Turso automatically replicates data to edge locations:
+
+- **Write path**: Writes go to primary region, then replicate
+- **Read path**: Reads served from nearest edge replica
+- **Consistency**: Eventually consistent reads (typically less than 100ms lag)
+
+**Implications:**
+- Fresh data may not appear immediately in all regions
+- After creating a note, redirect to detail page (served from same region)
+- No stale reads for same user session (session pinning)
+
+## Security
+
+### User Isolation
+
+All queries MUST filter by `userId` to prevent data leaks:
+
+```ts
+// ✅ Correct: Filter by user
+await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+
+// ❌ Incorrect: Fetches all users' notes
+await db.select().from(notes)
+```
+
+See [Middleware](/architecture/middleware) for authentication enforcement.
+
+### SQL Injection Protection
+
+Drizzle uses parameterized queries by default:
+
+```ts
+// Safe: userId is automatically parameterized
+where(eq(notes.userId, userId))
+
+// Generates: WHERE user_id = ?
+// Binds: [userId]
+```
+
+**Never use raw SQL with user input** unless properly sanitized:
+```ts
+// ❌ Dangerous
+await db.execute(sql`SELECT * FROM notes WHERE id = ${userInput}`)
+
+// ✅ Safe (parameterized)
+await db.execute(sql`SELECT * FROM notes WHERE id = ${userInput}`) // Drizzle auto-sanitizes
+```
+
+## Future Schema Changes
+
+Potential schema enhancements:
+
+- **Tags table**: Many-to-many relationship for note categorization
+- **Sharing**: Add `shared_notes` table for collaboration
+- **Soft deletes**: Add `deleted_at` column for trash functionality
+- **Full-text search**: Add FTS5 virtual table for content search
+- **Attachments**: Add `attachments` table for file uploads
+
+All changes should use Drizzle migrations to maintain type safety and version control.

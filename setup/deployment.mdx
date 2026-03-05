@@ -1,0 +1,375 @@
+---
+title: 'Deployment'
+description: 'Deploy Pad Notes to Vercel with proper environment configuration'
+---
+
+## Overview
+
+Pad Notes is configured to deploy to [Vercel](https://vercel.com), with the Astro Vercel adapter for serverless functions and edge middleware.
+
+## Prerequisites
+
+- Completed all previous setup steps:
+  - [Installation](/setup/installation)
+  - [Authentication](/setup/authentication)
+  - [Database](/setup/database)
+  - [Rate Limiting](/setup/rate-limiting)
+- A Vercel account
+- Git repository (GitHub, GitLab, or Bitbucket)
+
+## Vercel Adapter Configuration
+
+Pad Notes uses the `@astrojs/vercel` adapter configured in `astro.config.mjs`:
+
+```javascript astro.config.mjs
+import vercel from '@astrojs/vercel'
+import { defineConfig } from 'astro/config'
+
+export default defineConfig({
+  output: 'server',    // Enable SSR
+  adapter: vercel(),   // Use Vercel adapter
+  // ... other config
+})
+```
+
+This configuration:
+- Enables Server-Side Rendering (SSR)
+- Deploys API routes as Vercel serverless functions
+- Handles middleware for authentication
+
+## Deployment Steps
+
+<Steps>
+  <Step title="Push code to Git repository">
+    Ensure your code is committed and pushed to a Git repository:
+
+    ```bash
+    git add .
+    git commit -m "Ready for deployment"
+    git push origin main
+    ```
+
+    <Warning>
+      Verify that `.env` is in your `.gitignore` and not committed to your repository.
+    </Warning>
+  </Step>
+
+  <Step title="Import project to Vercel">
+    1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
+    2. Click **Add New** → **Project**
+    3. Import your Git repository
+    4. Select the repository containing Pad Notes
+    5. Configure project settings:
+       - **Framework Preset**: Astro
+       - **Root Directory**: `client` (if your project structure requires it)
+       - **Build Command**: `pnpm build`
+       - **Output Directory**: `dist`
+  </Step>
+
+  <Step title="Configure environment variables">
+    Add all required environment variables in the Vercel project settings:
+
+    **Clerk Authentication**:
+    ```bash
+    PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_...
+    CLERK_SECRET_KEY=sk_live_...
+    ```
+
+    **Turso Database**:
+    ```bash
+    TURSO_DATABASE_URL=libsql://pad-notes-your-org.turso.io
+    TURSO_AUTH_TOKEN=eyJhbGciOiJFZERTQS...
+    ```
+
+    **Upstash Redis**:
+    ```bash
+    UPSTASH_REDIS_REST_URL=https://your-database.upstash.io
+    UPSTASH_REDIS_REST_TOKEN=AabcD...
+    ```
+
+    <Note>
+      Use production credentials, not development keys. Generate new tokens for production from Clerk, Turso, and Upstash.
+    </Note>
+  </Step>
+
+  <Step title="Deploy">
+    Click **Deploy** to start the deployment process.
+
+    Vercel will:
+    1. Clone your repository
+    2. Install dependencies with pnpm
+    3. Build your Astro project
+    4. Deploy to serverless infrastructure
+    5. Provide a production URL
+  </Step>
+
+  <Step title="Configure custom domain (optional)">
+    To use a custom domain:
+
+    1. Go to **Project Settings** → **Domains**
+    2. Add your custom domain
+    3. Follow Vercel's DNS configuration instructions
+    4. Update your domain's DNS records
+
+    Vercel automatically provisions SSL certificates for custom domains.
+  </Step>
+</Steps>
+
+## Production Configuration
+
+### Clerk Production Settings
+
+1. In Clerk Dashboard, go to your production instance
+2. Add your production domain to **Allowed Domains**:
+   - `https://your-app.vercel.app`
+   - `https://your-custom-domain.com`
+3. Configure OAuth providers with production credentials
+4. Update webhook URLs if you're using Clerk webhooks
+
+### Turso Production Database
+
+For production, create a separate Turso database:
+
+```bash
+# Create production database
+turso db create pad-notes-prod --location iad
+
+# Get production credentials
+turso db show pad-notes-prod --url
+turso db tokens create pad-notes-prod
+```
+
+Add these to your Vercel environment variables.
+
+<Note>
+  Consider creating database replicas in multiple regions for global low-latency access:
+  ```bash
+  turso db replicate pad-notes-prod --location fra
+  turso db replicate pad-notes-prod --location syd
+  ```
+</Note>
+
+### Upstash Production Database
+
+Create a separate Upstash Redis database for production:
+
+1. In Upstash Console, create a new database named "pad-notes-prod"
+2. Enable **Global** replication for worldwide low latency
+3. Copy the production credentials to Vercel
+
+## Build Optimization
+
+### Vite Configuration
+
+The `astro.config.mjs` includes optimizations for production:
+
+```javascript astro.config.mjs
+vite: {
+  ssr: {
+    // Bundle external dependencies for SSR
+    noExternal: [
+      'tslib',
+      '@radix-ui/react-*',
+      'react-remove-scroll',
+      'react-remove-scroll-bar',
+      'use-sidecar',
+    ],
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // Code splitting for better caching
+        manualChunks: {
+          framework: ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+}
+```
+
+These optimizations:
+- Reduce bundle size through code splitting
+- Improve caching by separating framework code
+- Ensure compatibility with Vercel's serverless environment
+
+## Monitoring
+
+### Vercel Analytics
+
+Enable Vercel Analytics for performance insights:
+
+1. Go to **Project Settings** → **Analytics**
+2. Enable **Web Analytics**
+3. Optionally enable **Speed Insights**
+
+Vercel Analytics tracks:
+- Page views
+- Core Web Vitals
+- Deployment performance
+
+### Clerk User Analytics
+
+Clerk provides user analytics in the dashboard:
+- Sign-up rates
+- Active users
+- Authentication methods
+
+### Upstash Rate Limit Analytics
+
+Monitor rate limiting in Upstash Console:
+- Request patterns
+- Rate limit hits
+- Geographic distribution
+
+## Continuous Deployment
+
+Vercel automatically deploys when you push to your repository:
+
+- **Production**: Deploys from `main` branch
+- **Preview**: Deploys from pull requests and other branches
+
+### Branch Configuration
+
+1. Go to **Project Settings** → **Git**
+2. Configure production branch (default: `main`)
+3. Enable/disable automatic deployments for branches
+
+### Preview Deployments
+
+Every pull request gets a unique preview URL for testing:
+- Isolated environment
+- Same configuration as production
+- Automatic cleanup after PR merge
+
+<Warning>
+  Preview deployments use production environment variables. Consider using separate credentials for preview environments.
+</Warning>
+
+## Database Migrations in Production
+
+To apply database migrations to production:
+
+<Steps>
+  <Step title="Generate migration locally">
+    ```bash
+    pnpm drizzle-kit generate
+    ```
+  </Step>
+
+  <Step title="Test migration on staging database">
+    Create a staging database and test the migration:
+    ```bash
+    turso db create pad-notes-staging
+    # Set staging credentials in .env.staging
+    pnpm drizzle-kit migrate
+    ```
+  </Step>
+
+  <Step title="Apply to production">
+    Set production credentials locally:
+    ```bash
+    export TURSO_DATABASE_URL="your-prod-url"
+    export TURSO_AUTH_TOKEN="your-prod-token"
+    pnpm drizzle-kit migrate
+    ```
+
+    Or use Turso CLI:
+    ```bash
+    turso db shell pad-notes-prod < drizzle/0001_migration.sql
+    ```
+  </Step>
+
+  <Step title="Deploy application">
+    After successful migration, deploy your application:
+    ```bash
+    git push origin main
+    ```
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### Build Failures
+
+**"Failed to install dependencies"**
+- Verify `package.json` and `pnpm-lock.yaml` are committed
+- Check that pnpm version matches `packageManager` field
+
+**"Module not found"**
+- Ensure all imports use correct paths
+- Check that `tsconfig.json` path aliases match
+
+### Runtime Errors
+
+**"Missing environment variable"**
+- Verify all environment variables are set in Vercel
+- Check variable names (including `PUBLIC_` prefix for client variables)
+- Redeploy after adding variables
+
+**"Database connection failed"**
+- Verify Turso credentials are for the correct database
+- Check that tokens haven't expired
+- Ensure database is in the same region as Vercel deployment
+
+**"Rate limit not working"**
+- Verify Upstash credentials
+- Check that Redis database is accessible
+- Review Upstash console for connection errors
+
+### Performance Issues
+
+**Slow API responses**
+- Check Turso database region (should match Vercel deployment region)
+- Enable Turso database replication
+- Review rate limiting configuration
+
+**High cold start times**
+- Consider Vercel Pro plan for reduced cold starts
+- Optimize bundle size
+- Review SSR configuration
+
+## Security Checklist
+
+<Steps>
+  <Step title="Environment Variables">
+    - [ ] All secrets are in Vercel environment variables, not in code
+    - [ ] `.env` is in `.gitignore`
+    - [ ] Production credentials are different from development
+  </Step>
+
+  <Step title="Authentication">
+    - [ ] Clerk production keys configured
+    - [ ] OAuth providers use production credentials
+    - [ ] Allowed domains configured in Clerk
+  </Step>
+
+  <Step title="Database">
+    - [ ] Turso production database is separate
+    - [ ] Database tokens are rotated regularly
+    - [ ] Rate limiting is enabled
+  </Step>
+
+  <Step title="API Security">
+    - [ ] All API routes require authentication
+    - [ ] Rate limiting is configured
+    - [ ] Input validation is in place
+  </Step>
+</Steps>
+
+## Next Steps
+
+After deployment:
+
+- Monitor application performance in Vercel Analytics
+- Set up error tracking (Sentry, LogRocket, etc.)
+- Configure custom domain
+- Set up database backups (Turso automatic backups)
+- Review and adjust rate limits based on usage
+
+## Additional Resources
+
+- [Vercel Documentation](https://vercel.com/docs)
+- [Astro Deployment Guide](https://docs.astro.build/en/guides/deploy/vercel/)
+- [Clerk Production Checklist](https://clerk.com/docs/deployments/overview)
+- [Turso Production Best Practices](https://docs.turso.tech/reference/production-best-practices)

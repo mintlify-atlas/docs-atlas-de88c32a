@@ -1,0 +1,242 @@
+---
+title: 'Delete Note'
+api: 'DELETE /api/notes/[id]'
+description: 'Permanently delete a note with ownership verification'
+---
+
+## Endpoint
+
+```
+DELETE /api/notes/{id}
+```
+
+Permanently deletes a note. The user must own the note to delete it. This operation is irreversible.
+
+## Authentication
+
+This endpoint requires authentication via Clerk. The user must have a valid session.
+
+## Rate Limiting
+
+This is a **write operation** with a rate limit of **10 requests per 10 seconds** per user.
+
+## Request
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the note to delete
+  
+  **Validation:**
+  - Must be a valid UUID format
+  - Note must exist and belong to the authenticated user
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X DELETE https://your-domain.com/api/notes/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Cookie: __session=your-session-token"
+```
+
+## Response
+
+<ResponseField name="data" type="object" required>
+  The deleted note object (returned for confirmation)
+  
+  <Expandable title="Note Object">
+    <ResponseField name="id" type="string" required>
+      UUID of the deleted note
+    </ResponseField>
+    
+    <ResponseField name="title" type="string" required>
+      Title of the deleted note
+    </ResponseField>
+    
+    <ResponseField name="textNote" type="string" required>
+      Content of the deleted note
+    </ResponseField>
+    
+    <ResponseField name="userId" type="string" required>
+      Clerk user ID of the note owner
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp" required>
+      When the note was originally created
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="timestamp" required>
+      When the note was last updated
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Success Response (200)
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "title": "Project Ideas",
+    "textNote": "Brainstorm new features for the Q2 roadmap including mobile app support and API improvements.",
+    "userId": "user_2abc123def456",
+    "createdAt": "2026-03-05T15:45:30.000Z",
+    "updatedAt": "2026-03-05T16:20:15.000Z"
+  }
+}
+```
+
+<Warning>
+This is a **hard delete** operation. The note is permanently removed from the database and cannot be recovered. The deleted note data is returned in the response for confirmation purposes only.
+</Warning>
+
+## Error Responses
+
+### Unauthorized (401)
+
+Returned when the request is not authenticated:
+
+```json
+{
+  "error": "No autenticado"
+}
+```
+
+### Invalid ID (400)
+
+Returned when the note ID is not a valid UUID:
+
+```json
+{
+  "error": "ID inválido"
+}
+```
+
+### Not Found (404)
+
+Returned when:
+- The note with the given ID does not exist
+- The note exists but belongs to a different user
+- The note was already deleted
+
+```json
+{
+  "error": "Nota no encontrada"
+}
+```
+
+<Info>
+For security reasons, the API returns the same 404 error whether the note doesn't exist or the user doesn't own it. This prevents information disclosure about which note IDs exist in the system.
+</Info>
+
+### Rate Limit Exceeded (429)
+
+Returned when the user exceeds 10 write requests per 10 seconds:
+
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 4
+}
+```
+
+Headers include:
+- `Retry-After`: Seconds until the rate limit resets
+
+### Server Error (500)
+
+Returned when an unexpected server error occurs:
+
+```json
+{
+  "error": "Error del servidor"
+}
+```
+
+## Implementation Details
+
+### Hard Delete
+
+This endpoint performs a **hard delete**, meaning the note is permanently removed from the database:
+
+```typescript
+db.delete(notes)
+  .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+  .returning()
+```
+
+There is no soft delete or recovery mechanism. Once deleted, the note cannot be restored.
+
+### Ownership Verification
+
+The endpoint automatically verifies ownership using a database query that checks both the note ID and user ID. If the query returns no results, it means either:
+- The note doesn't exist
+- The user doesn't own the note
+- The note was already deleted
+
+All cases result in a 404 error for security.
+
+### ID Validation
+
+The note ID is validated using the `noteIdSchema` before the delete operation:
+
+```typescript
+const noteIdSchema = z.uuid()
+```
+
+Invalid UUIDs are rejected with a 400 error before any database query is executed.
+
+### Return Value
+
+The deleted note data is returned using `.returning()` to provide confirmation of what was deleted. This can be useful for:
+- Confirming the correct note was deleted
+- Implementing undo functionality (by re-creating with the same data)
+- Logging or audit trails
+
+## Code Reference
+
+Implementation: `/home/daytona/workspace/source/client/src/pages/api/notes/[id].ts:98`
+
+## Best Practices
+
+### Confirmation Before Delete
+
+Always implement user confirmation in your client application before calling this endpoint:
+
+```javascript
+const deleteNote = async (noteId) => {
+  if (!confirm('Are you sure you want to delete this note? This cannot be undone.')) {
+    return;
+  }
+  
+  const response = await fetch(`/api/notes/${noteId}`, {
+    method: 'DELETE',
+  });
+  
+  if (response.ok) {
+    const { data } = await response.json();
+    console.log('Deleted note:', data);
+  }
+};
+```
+
+### Error Handling
+
+Handle the 404 error gracefully in case the note was already deleted:
+
+```javascript
+try {
+  const response = await fetch(`/api/notes/${noteId}`, {
+    method: 'DELETE',
+  });
+  
+  if (response.status === 404) {
+    console.log('Note already deleted or not found');
+  } else if (!response.ok) {
+    const { error } = await response.json();
+    console.error('Delete failed:', error);
+  }
+} catch (error) {
+  console.error('Network error:', error);
+}
+```

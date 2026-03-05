@@ -1,0 +1,294 @@
+---
+title: Technology Stack
+description: Overview of the technology stack powering Pad Notes
+---
+
+Pad Notes is built with a modern, edge-first architecture designed for performance, scalability, and developer experience. This page outlines the core technologies and architectural decisions.
+
+## Core Technologies
+
+### Frontend Framework: Astro + React
+
+Pad Notes uses a hybrid architecture combining **Astro** for the application shell and **React** for interactive components.
+
+```js
+// astro.config.mjs
+export default defineConfig({
+  output: 'server',
+  adapter: vercel(),
+  integrations: [
+    react(),
+    clerk({
+      localization: esMX,
+    }),
+  ],
+})
+```
+
+**Why Astro?**
+- **Server-first architecture**: Astro's SSR approach delivers minimal JavaScript to the client
+- **Islands architecture**: Only interactive components (React islands) are hydrated, reducing bundle size
+- **API routes**: Built-in support for serverless API endpoints at `/api/*`
+- **Vercel adapter**: Seamless deployment to Vercel's edge network
+
+**Why React?**
+- **Component interactivity**: React handles complex UI interactions like note editing dialogs
+- **Ecosystem**: Access to React UI libraries like Radix UI for accessible components
+- **Type safety**: Full TypeScript support with React components
+
+### Authentication: Clerk
+
+[Clerk](https://clerk.com) provides secure, production-ready authentication with minimal configuration.
+
+**Key features:**
+- Pre-built UI components for sign-in/sign-up flows
+- Session management with JWT tokens
+- User metadata and profile management
+- Localization support (configured for Spanish/Mexico with `esMX`)
+
+**Integration:**
+```js
+// Clerk integration in astro.config.mjs
+clerk({
+  localization: esMX,
+})
+```
+
+See [Middleware](/architecture/middleware) for authentication implementation details.
+
+### Database: Turso (libSQL)
+
+[Turso](https://turso.tech) is an edge-hosted database built on libSQL (SQLite fork) that provides:
+
+**Benefits:**
+- **Edge deployment**: Database replicas at the edge for low-latency reads
+- **SQLite compatibility**: Familiar SQL syntax with modern extensions
+- **HTTP API**: Connect via `@libsql/client` without persistent connections
+- **Cost-effective**: Pay-per-request pricing model
+
+**Client setup:**
+```ts
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
+
+const client = createClient({
+  url: import.meta.env.TURSO_DATABASE_URL!,
+  authToken: import.meta.env.TURSO_AUTH_TOKEN!,
+})
+
+export const db = drizzle(client, { schema })
+```
+
+**Why Turso over traditional databases?**
+- No connection pooling needed (HTTP-based)
+- Scales automatically with serverless functions
+- Sub-100ms response times from edge locations
+- Zero cold start overhead
+
+### ORM: Drizzle
+
+[Drizzle ORM](https://orm.drizzle.team) provides type-safe database queries with a minimal runtime footprint.
+
+**Configuration:**
+```ts
+// drizzle.config.ts
+export default defineConfig({
+  schema: './src/db/schema.ts',
+  out: './drizzle',
+  dialect: 'turso',
+  dbCredentials: {
+    url: process.env.TURSO_DATABASE_URL!,
+    authToken: process.env.TURSO_AUTH_TOKEN!,
+  },
+  verbose: true,
+  strict: true,
+})
+```
+
+**Advantages:**
+- **Type inference**: Automatic TypeScript types from schema definitions
+- **SQL-like API**: Queries resemble SQL for easy learning curve
+- **Lightweight**: ~7kb gzipped vs 40kb+ for Prisma
+- **Turso-specific dialect**: Native support for Turso's features
+
+See [Database Schema](/architecture/database-schema) for table definitions.
+
+### Rate Limiting: Upstash Redis
+
+[Upstash Redis](https://upstash.com) provides serverless Redis for rate limiting and caching.
+
+**Implementation:**
+```ts
+import { Ratelimit } from '@upstash/ratelimit'
+import { Redis } from '@upstash/redis'
+
+const redis = new Redis({
+  url: import.meta.env.UPSTASH_REDIS_REST_URL!,
+  token: import.meta.env.UPSTASH_REDIS_REST_TOKEN!,
+})
+
+// Write operations: 10 requests per 10 seconds
+export const writeRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/write',
+})
+
+// Read operations: 30 requests per 10 seconds
+export const readRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/read',
+})
+```
+
+**Why Upstash Redis?**
+- **REST API**: No persistent connections required for serverless
+- **Global replication**: Low-latency access from edge functions
+- **Built-in analytics**: Track rate limit hits and patterns
+- **Sliding window algorithm**: More accurate than fixed-window rate limiting
+
+**Rate limit configuration:**
+- **Write operations** (POST, PUT, DELETE): 10 requests per 10 seconds
+- **Read operations** (GET): 30 requests per 10 seconds
+
+### Styling: Tailwind CSS 4
+
+Tailwind CSS v4 is used for styling with the new Vite plugin architecture.
+
+```js
+// astro.config.mjs
+import tailwindcss from '@tailwindcss/vite'
+
+export default defineConfig({
+  vite: {
+    plugins: [tailwindcss()],
+  },
+})
+```
+
+**Benefits of Tailwind CSS 4:**
+- **Vite-native**: First-class Vite integration
+- **CSS-first configuration**: Configure via CSS instead of JavaScript
+- **Lightning-fast builds**: Dramatically improved compilation speed
+- **Automatic content detection**: No manual content paths needed
+
+### Validation: Zod
+
+Zod provides runtime type validation for API requests.
+
+```ts
+import { z } from 'zod'
+
+export const createNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim(),
+  textNote: z.string().min(3).max(400).trim(),
+})
+
+export const noteIdSchema = z.uuid()
+```
+
+**Usage in API routes:**
+```ts
+const validation = createNoteSchema.safeParse(body)
+if (!validation.success) {
+  return new Response(
+    JSON.stringify({
+      error: 'Datos inválidos',
+      details: z.flattenError(validation.error).fieldErrors,
+    }),
+    { status: 400 }
+  )
+}
+```
+
+## Architecture Decisions
+
+### Server-Side Rendering (SSR)
+
+Pad Notes uses **full SSR** with the Vercel adapter:
+
+```js
+export default defineConfig({
+  output: 'server', // SSR mode
+  adapter: vercel(),
+})
+```
+
+**Benefits:**
+- Protected routes require authentication before rendering
+- API routes run on Vercel's edge network
+- Dynamic content (user notes) rendered server-side
+- Better SEO for public pages
+
+### Edge-First Architecture
+
+All components are optimized for edge deployment:
+
+- **Turso**: Edge-replicated database
+- **Upstash Redis**: Global Redis with REST API
+- **Vercel Edge Functions**: API routes run at the edge
+- **Clerk**: Edge-compatible authentication
+
+This architecture ensures low-latency responses regardless of user location.
+
+### Hybrid Rendering
+
+Astro's islands architecture allows mixing rendering strategies:
+
+- **Static content**: Marketing pages, documentation
+- **Server-rendered**: Dashboard with user-specific notes
+- **Client-hydrated**: Interactive components (dialogs, forms)
+
+```jsx
+// Only the NoteEditor component hydrates on the client
+<NoteEditor client:load />
+```
+
+## Package Management
+
+Pad Notes uses **pnpm** for fast, disk-efficient package management:
+
+```json
+{
+  "packageManager": "pnpm@10.15.0"
+}
+```
+
+**Advantages:**
+- Content-addressable storage (saves disk space)
+- Strict dependency resolution (prevents phantom dependencies)
+- Faster installs than npm/yarn
+
+## Development Tools
+
+### Linting & Formatting
+
+- **ESLint**: JavaScript/TypeScript linting with Astro plugin
+- **Prettier**: Code formatting with Astro and Tailwind plugins
+- **TypeScript ESLint**: Type-aware linting rules
+
+### Database Migrations
+
+```bash
+# Generate migrations from schema changes
+pnpm drizzle-kit generate
+
+# Apply migrations to Turso database
+pnpm drizzle-kit migrate
+```
+
+Drizzle Kit provides type-safe migrations with verbose logging and strict validation.
+
+## Deployment
+
+Pad Notes deploys to **Vercel** with automatic:
+
+- Edge function deployment for API routes
+- Static asset optimization and CDN distribution
+- Preview deployments for pull requests
+- Environment variable management
+
+See the [Deployment Guide](/setup/deployment) for configuration details.

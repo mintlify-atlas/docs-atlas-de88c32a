@@ -1,0 +1,227 @@
+---
+title: 'Validation Schemas'
+description: 'Zod validation schemas for API request validation'
+---
+
+## Overview
+
+Pad Notes uses [Zod](https://zod.dev/) for runtime type validation of API requests. These schemas ensure that incoming data meets the required format and constraints before processing.
+
+## Validation Schemas
+
+### createNoteSchema
+
+Validates the request body when creating a new note.
+
+<ResponseField name="title" type="string" required>
+  The title of the note.
+  
+  - **Minimum length**: 3 characters
+  - **Maximum length**: 100 characters
+  - **Transformations**: Trimmed whitespace
+</ResponseField>
+
+<ResponseField name="textNote" type="string" required>
+  The content of the note.
+  
+  - **Minimum length**: 3 characters
+  - **Maximum length**: 400 characters
+  - **Transformations**: Trimmed whitespace
+</ResponseField>
+
+#### TypeScript Definition
+
+```typescript
+import { z } from 'zod'
+
+export const createNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim(),
+  textNote: z.string().min(3).max(400).trim(),
+})
+
+export type CreateNoteInput = z.infer<typeof createNoteSchema>
+```
+
+#### Example Valid Input
+
+```json
+{
+  "title": "Meeting Notes",
+  "textNote": "Discussed Q1 goals and project timelines."
+}
+```
+
+---
+
+### updateNoteSchema
+
+Validates the request body when updating an existing note. All fields are optional.
+
+<ResponseField name="title" type="string">
+  The updated title of the note (optional).
+  
+  - **Minimum length**: 3 characters
+  - **Maximum length**: 100 characters
+  - **Transformations**: Trimmed whitespace
+  - **Optional**: Yes
+</ResponseField>
+
+<ResponseField name="textNote" type="string">
+  The updated content of the note (optional).
+  
+  - **Minimum length**: 3 characters
+  - **Maximum length**: 400 characters
+  - **Transformations**: Trimmed whitespace
+  - **Optional**: Yes
+</ResponseField>
+
+#### TypeScript Definition
+
+```typescript
+export const updateNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim().optional(),
+  textNote: z.string().min(3).max(400).trim().optional(),
+})
+
+export type UpdateNoteInput = z.infer<typeof updateNoteSchema>
+```
+
+#### Example Valid Input
+
+```json
+{
+  "title": "Updated Meeting Notes"
+}
+```
+
+---
+
+### noteIdSchema
+
+Validates note ID parameters in route paths. Ensures the ID is a valid UUID.
+
+#### TypeScript Definition
+
+```typescript
+export const noteIdSchema = z.uuid()
+```
+
+#### Example Valid Input
+
+```
+"550e8400-e29b-41d4-a716-446655440000"
+```
+
+## Validation Errors
+
+When validation fails, Zod returns detailed error information. Here are common validation error formats:
+
+### Title Too Short
+
+```json
+{
+  "issues": [
+    {
+      "code": "too_small",
+      "minimum": 3,
+      "type": "string",
+      "inclusive": true,
+      "exact": false,
+      "message": "String must contain at least 3 character(s)",
+      "path": ["title"]
+    }
+  ]
+}
+```
+
+### Title Too Long
+
+```json
+{
+  "issues": [
+    {
+      "code": "too_big",
+      "maximum": 100,
+      "type": "string",
+      "inclusive": true,
+      "exact": false,
+      "message": "String must contain at most 100 character(s)",
+      "path": ["title"]
+    }
+  ]
+}
+```
+
+### Text Note Too Long
+
+```json
+{
+  "issues": [
+    {
+      "code": "too_big",
+      "maximum": 400,
+      "type": "string",
+      "inclusive": true,
+      "exact": false,
+      "message": "String must contain at most 400 character(s)",
+      "path": ["textNote"]
+    }
+  ]
+}
+```
+
+### Invalid UUID Format
+
+```json
+{
+  "issues": [
+    {
+      "validation": "uuid",
+      "code": "invalid_string",
+      "message": "Invalid uuid",
+      "path": []
+    }
+  ]
+}
+```
+
+### Missing Required Field
+
+```json
+{
+  "issues": [
+    {
+      "code": "invalid_type",
+      "expected": "string",
+      "received": "undefined",
+      "path": ["title"],
+      "message": "Required"
+    }
+  ]
+}
+```
+
+## Usage in API Endpoints
+
+These schemas are typically used in API route handlers to validate incoming requests:
+
+```typescript
+import { createNoteSchema, updateNoteSchema, noteIdSchema } from '@/lib/validations'
+
+// POST /api/notes
+const body = createNoteSchema.parse(await request.json())
+
+// PUT /api/notes/:id
+const id = noteIdSchema.parse(params.id)
+const body = updateNoteSchema.parse(await request.json())
+```
+
+## Validation Rules Summary
+
+| Schema | Field | Min Length | Max Length | Required | Transform |
+|--------|-------|------------|------------|----------|----------|
+| createNoteSchema | title | 3 | 100 | Yes | trim() |
+| createNoteSchema | textNote | 3 | 400 | Yes | trim() |
+| updateNoteSchema | title | 3 | 100 | No | trim() |
+| updateNoteSchema | textNote | 3 | 400 | No | trim() |
+| noteIdSchema | - | - | - | Yes | - (UUID format) |

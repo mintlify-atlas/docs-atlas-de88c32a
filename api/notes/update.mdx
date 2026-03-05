@@ -1,0 +1,295 @@
+---
+title: 'Update Note'
+api: 'PUT /api/notes/[id]'
+description: 'Update an existing note with ownership verification'
+---
+
+## Endpoint
+
+```
+PUT /api/notes/{id}
+```
+
+Updates an existing note. The user must own the note to update it.
+
+## Authentication
+
+This endpoint requires authentication via Clerk. The user must have a valid session.
+
+## Rate Limiting
+
+This is a **write operation** with a rate limit of **10 requests per 10 seconds** per user.
+
+## Request
+
+### Path Parameters
+
+<ParamField path="id" type="string" required>
+  UUID of the note to update
+  
+  **Validation:**
+  - Must be a valid UUID format
+  - Note must exist and belong to the authenticated user
+</ParamField>
+
+### Body Parameters
+
+All fields are optional. Only include fields you want to update.
+
+<ParamField path="title" type="string">
+  Updated title of the note
+  
+  **Validation:**
+  - Minimum: 3 characters
+  - Maximum: 100 characters
+  - Automatically trimmed
+</ParamField>
+
+<ParamField path="textNote" type="string">
+  Updated content of the note
+  
+  **Validation:**
+  - Minimum: 3 characters
+  - Maximum: 400 characters
+  - Automatically trimmed
+</ParamField>
+
+### Example Request
+
+```bash
+curl -X PUT https://your-domain.com/api/notes/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: __session=your-session-token" \
+  -d '{
+    "title": "Updated Project Ideas",
+    "textNote": "Revised Q2 roadmap priorities: focus on mobile app and performance optimization."
+  }'
+```
+
+### Partial Update Example
+
+You can update just the title:
+
+```bash
+curl -X PUT https://your-domain.com/api/notes/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: __session=your-session-token" \
+  -d '{
+    "title": "New Title Only"
+  }'
+```
+
+Or just the content:
+
+```bash
+curl -X PUT https://your-domain.com/api/notes/a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  -H "Content-Type: application/json" \
+  -H "Cookie: __session=your-session-token" \
+  -d '{
+    "textNote": "New content only"
+  }'
+```
+
+## Response
+
+<ResponseField name="data" type="object" required>
+  The updated note object
+  
+  <Expandable title="Note Object">
+    <ResponseField name="id" type="string" required>
+      UUID of the note (unchanged)
+    </ResponseField>
+    
+    <ResponseField name="title" type="string" required>
+      Updated or original title
+    </ResponseField>
+    
+    <ResponseField name="textNote" type="string" required>
+      Updated or original content
+    </ResponseField>
+    
+    <ResponseField name="userId" type="string" required>
+      Clerk user ID (unchanged)
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp" required>
+      Original creation timestamp (unchanged)
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="timestamp" required>
+      Updated to current timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Success Response (200)
+
+```json
+{
+  "data": {
+    "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "title": "Updated Project Ideas",
+    "textNote": "Revised Q2 roadmap priorities: focus on mobile app and performance optimization.",
+    "userId": "user_2abc123def456",
+    "createdAt": "2026-03-05T15:45:30.000Z",
+    "updatedAt": "2026-03-05T16:20:15.000Z"
+  }
+}
+```
+
+## Error Responses
+
+### Unauthorized (401)
+
+Returned when the request is not authenticated:
+
+```json
+{
+  "error": "No autenticado"
+}
+```
+
+### Invalid ID (400)
+
+Returned when the note ID is not a valid UUID:
+
+```json
+{
+  "error": "ID inválido"
+}
+```
+
+### Validation Error (400)
+
+Returned when the request body fails validation:
+
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "title": ["String must contain at least 3 character(s)"]
+  }
+}
+```
+
+#### Common Validation Errors
+
+**Title too short:**
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "title": ["String must contain at least 3 character(s)"]
+  }
+}
+```
+
+**Title too long:**
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "title": ["String must contain at most 100 character(s)"]
+  }
+}
+```
+
+**TextNote too short:**
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "textNote": ["String must contain at least 3 character(s)"]
+  }
+}
+```
+
+**TextNote too long:**
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "textNote": ["String must contain at most 400 character(s)"]
+  }
+}
+```
+
+### Not Found (404)
+
+Returned when:
+- The note with the given ID does not exist
+- The note exists but belongs to a different user
+
+```json
+{
+  "error": "Nota no encontrada"
+}
+```
+
+<Info>
+For security reasons, the API returns the same 404 error whether the note doesn't exist or the user doesn't own it. This prevents information disclosure about which note IDs exist in the system.
+</Info>
+
+### Rate Limit Exceeded (429)
+
+Returned when the user exceeds 10 write requests per 10 seconds:
+
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 5
+}
+```
+
+Headers include:
+- `Retry-After`: Seconds until the rate limit resets
+
+### Server Error (500)
+
+Returned when an unexpected server error occurs:
+
+```json
+{
+  "error": "Error del servidor"
+}
+```
+
+## Implementation Details
+
+### Ownership Verification
+
+The endpoint automatically verifies ownership using a database query that checks both the note ID and user ID:
+
+```typescript
+db.update(notes)
+  .set({
+    ...validation.data,
+    updatedAt: new Date(),
+  })
+  .where(and(eq(notes.id, id), eq(notes.userId, userId)))
+  .returning()
+```
+
+If the query returns no results, it means either the note doesn't exist or the user doesn't own it, resulting in a 404 error.
+
+### Validation Schema
+
+The endpoint uses Zod for schema validation with the `updateNoteSchema`:
+
+```typescript
+const updateNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim().optional(),
+  textNote: z.string().min(3).max(400).trim().optional(),
+})
+```
+
+Both fields are optional, allowing partial updates.
+
+### Automatic Fields
+
+- `updatedAt`: Automatically set to the current timestamp on every update
+- `id`, `userId`, `createdAt`: Cannot be modified
+
+## Code Reference
+
+Implementation: `/home/daytona/workspace/source/client/src/pages/api/notes/[id].ts:10`

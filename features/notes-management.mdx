@@ -1,0 +1,365 @@
+---
+title: 'Notes Management'
+description: 'Create, edit, and organize your notes in Pad Notes'
+icon: 'note-sticky'
+---
+
+Pad Notes provides a clean, intuitive interface for managing your personal notes. Every note you create is automatically saved to the cloud and synced across all your devices.
+
+## Creating Notes
+
+### Quick Creation
+
+Click the **"Nueva nota"** (New Note) button in your dashboard to open the creation modal:
+
+```jsx
+// From: client/src/components/SendNotes.jsx:60
+<button className="flex cursor-pointer items-center gap-2 self-end rounded-md bg-green-700 px-2 py-1 text-sm font-semibold text-white hover:bg-green-800 md:text-base">
+  Nueva nota
+  <StickyNote width={18} height={18} />
+</button>
+```
+
+### Note Structure
+
+Every note consists of two required fields:
+
+<CardGroup cols={2}>
+  <Card title="Title" icon="heading">
+    A brief, descriptive title for your note (3-100 characters)
+  </Card>
+  <Card title="Content" icon="align-left">
+    The main body of your note (3-400 characters)
+  </Card>
+</CardGroup>
+
+### Validation Rules
+
+Pad Notes enforces the following constraints to ensure data quality:
+
+```typescript
+// From: client/src/lib/validations.ts:4
+export const createNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim(),
+  textNote: z.string().min(3).max(400).trim(),
+})
+```
+
+| Field | Minimum | Maximum | Required |
+|-------|---------|---------|----------|
+| **Title** | 3 characters | 100 characters | Yes |
+| **Content** | 3 characters | 400 characters | Yes |
+
+<Info>
+  Both fields are automatically trimmed of leading and trailing whitespace before saving.
+</Info>
+
+### Save Process
+
+When you click **"Guardar"** (Save), here's what happens:
+
+```jsx
+// From: client/src/components/SendNotes.jsx:16
+const handleSubmit = async (e) => {
+  e.preventDefault()
+
+  const response = await fetch('/api/notes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: noteTitle,
+      textNote: note,
+    }),
+  })
+
+  if (response.status === 429) {
+    toast.error({ text: 'Demasiadas solicitudes, intenta en unos segundos' })
+    return
+  }
+
+  if (!response.ok) {
+    toast.error({ text: data.error || 'Error al crear la nota' })
+    return
+  }
+
+  toast.success({ text: 'Nota creada correctamente' })
+}
+```
+
+<Warning>
+  The "Save" button is disabled until both the title and content fields contain text.
+</Warning>
+
+## Database Storage
+
+Notes are stored in a Turso (SQLite) database with the following schema:
+
+```typescript
+// From: client/src/db/schema.ts:4
+export const notes = sqliteTable('notes', {
+  id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
+  title: text('title').notNull(),
+  textNote: text('text_note').notNull(),
+  userId: text('user_id').notNull(),
+  createdAt: integer('created_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+  updatedAt: integer('updated_at', { mode: 'timestamp' }).notNull().default(sql`(unixepoch())`),
+})
+```
+
+### Auto-Generated Fields
+
+- **id**: Unique UUID generated automatically
+- **userId**: Your Clerk user ID (ensures note privacy)
+- **createdAt**: Unix timestamp when note was created
+- **updatedAt**: Unix timestamp of last modification
+
+## Viewing Notes
+
+### Note Grid
+
+Your notes are displayed in a responsive grid layout that adapts to your screen size:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:119
+<ul className="grid w-full grid-cols-[repeat(auto-fit,_minmax(250px,1fr))] items-stretch gap-4 text-black">
+  {filteredNotes.map((note) => (
+    <li key={note.id}>
+      {/* Note card */}
+    </li>
+  ))}
+</ul>
+```
+
+### Note Card Preview
+
+Each note card shows:
+
+1. **Title** - Displayed in bold, uppercase
+2. **Preview** - First line of content with ellipsis if there's more
+3. **Last Edited** - Timestamp in format "DD/MM/YY, h:mm a"
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:132
+<h2 className="self-start font-bold text-black uppercase md:text-xl dark:text-white">
+  {note.title}
+</h2>
+<p className="mb-2.5 w-full self-start overflow-hidden text-sm text-ellipsis whitespace-nowrap">
+  {note.textNote.split('\n')[0]}
+  {note.textNote.includes('\n') ? '...' : ''}
+</p>
+<div className="self-end text-xs text-[#808692] md:text-sm">
+  <span>Editado: </span>
+  <span>{dateUpdated}</span>
+</div>
+```
+
+### Note Ordering
+
+Notes are sorted by most recently updated first:
+
+```typescript
+// From: client/src/pages/api/notes/index.ts:38
+const userNotes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))  // Most recent first
+```
+
+## Editing Notes
+
+### Open Edit Mode
+
+Click on any note card to open the modal, then click the **edit button** (pencil icon):
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:259
+<button
+  className="cursor-pointer self-end rounded-lg bg-blue-400 px-2.5 py-[0.1rem]"
+  onClick={() => handleEditNote(note)}
+>
+  <SquarePen size={20} />
+</button>
+```
+
+### Edit Interface
+
+When editing, you'll see:
+
+- Editable text input for the title
+- Expandable textarea for the content
+- **Cancel button** (X icon) - Discards changes
+- **Save button** (checkmark icon) - Saves modifications
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:157
+<input
+  type="text"
+  value={noteTitle}
+  onChange={(e) => setNoteTitle(e.target.value)}
+  className="field-sizing-content w-full resize-none rounded-lg border-1 border-[#e5e7eb] px-2 py-1"
+/>
+
+<textarea
+  value={noteMessage}
+  onChange={(e) => setNoteMessage(e.target.value)}
+  className="field-sizing-content min-h-10 w-full resize-none rounded-lg border-1 border-[#ccc] px-2 py-1"
+/>
+```
+
+<Info>
+  The save button is disabled if you haven't made any changes to the note.
+</Info>
+
+### Update Validation
+
+Edits use a relaxed validation schema where both fields are optional:
+
+```typescript
+// From: client/src/lib/validations.ts:10
+export const updateNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim().optional(),
+  textNote: z.string().min(3).max(400).trim().optional(),
+})
+```
+
+You can update just the title, just the content, or both.
+
+### Server Update
+
+```typescript
+// From: client/src/pages/api/notes/[id].ts:68
+const [updatedNote] = await db
+  .update(notes)
+  .set({
+    ...validation.data,
+    updatedAt: new Date(),  // Automatically updates timestamp
+  })
+  .where(and(eq(notes.id, params.id), eq(notes.userId, userId)))  // Ensures you own the note
+  .returning()
+```
+
+<Warning>
+  You can only edit notes that belong to you. The server verifies ownership before allowing updates.
+</Warning>
+
+## Deleting Notes
+
+### Confirmation Dialog
+
+Clicking the **delete button** (trash icon) opens a confirmation modal:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:235
+<section className="flex flex-col gap-4 text-black dark:text-white">
+  <h3>Estás seguro?</h3>
+  <p>Esta acción no se puede deshacer</p>
+  <div className="flex justify-end gap-2">
+    <button onClick={() => setIsOpen(false)}>Volver</button>
+    <button onClick={() => handleDeleteNote(note.id)}>Eliminar</button>
+  </div>
+</section>
+```
+
+<Warning>
+  Deletions are permanent. There is no undo or trash/recycle bin feature.
+</Warning>
+
+### Hard Delete
+
+Pad Notes performs a hard delete (no soft delete or archiving):
+
+```typescript
+// From: client/src/pages/api/notes/[id].ts:137
+const [deletedNote] = await db
+  .delete(notes)
+  .where(and(eq(notes.id, params.id), eq(notes.userId, userId)))
+  .returning()
+
+if (!deletedNote) {
+  return new Response(JSON.stringify({ error: 'Nota no encontrada' }), {
+    status: 404,
+  })
+}
+```
+
+## Additional Features
+
+### Copy to Clipboard
+
+Each note has a copy button to quickly copy the content:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:258
+<ButtonCopy note={note.textNote} />
+```
+
+### Multiline Support
+
+Notes preserve line breaks in the content using CSS:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:211
+<p className="my-4 self-start text-start break-words whitespace-pre-line text-black dark:text-white">
+  {note.textNote}
+</p>
+```
+
+### Loading States
+
+The UI shows different states based on your data:
+
+```jsx
+// From: client/src/components/ListNotes.jsx:27
+const fetchNotes = async () => {
+  try {
+    setIsLoading(true)
+    const response = await fetch('/api/notes')
+    const data = await response.json()
+    setNotes(data.data || [])
+  } catch (error) {
+    setError(error)
+  } finally {
+    setIsLoading(false)
+  }
+}
+```
+
+| State | Display |
+|-------|--------|
+| **Loading** | Spinner with "Cargando notas..." message |
+| **Empty** | Sad face image with "No hay notas para mostrar" |
+| **Error** | Error icon with error message |
+| **Success** | Grid of note cards |
+
+## Performance Optimization
+
+### Indexed Queries
+
+The database uses an index on `userId` for fast retrieval:
+
+```typescript
+// From: client/src/db/schema.ts:24
+(table) => ({
+  userIdIdx: index('user_id_idx').on(table.userId),
+})
+```
+
+This ensures your notes load quickly, even if you have hundreds of them.
+
+### Real-Time Updates
+
+The note list automatically refreshes after any create, update, or delete operation:
+
+```jsx
+// From: client/src/hooks/useChangeNotes.jsx
+const { refreshNotes, handleNoteAdded } = useChangeNotes()
+
+useEffect(() => {
+  fetchNotes()
+}, [refreshNotes, fetchNotes])
+```
+
+<Info>
+  You don't need to manually refresh the page. The UI updates automatically when you modify notes.
+</Info>

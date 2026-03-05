@@ -1,0 +1,411 @@
+---
+title: Middleware
+description: Authentication middleware and route protection implementation
+---
+
+Pad Notes uses Clerk middleware to protect routes and manage authentication state. This page documents the middleware implementation and routing logic.
+
+## Overview
+
+The middleware is located at `client/src/middleware.ts` and runs on every request to:
+
+1. Authenticate users via Clerk session tokens
+2. Protect routes requiring authentication
+3. Redirect authenticated users away from public pages
+4. Provide auth context to API routes and pages
+
+## Implementation
+
+The complete middleware implementation:
+
+```ts
+import { clerkMiddleware, createRouteMatcher } from '@clerk/astro/server'
+
+const isProtectedRoute = createRouteMatcher(['/dashboard', '/api/notes(.*)'])
+
+export const onRequest = clerkMiddleware((auth, context) => {
+  const { userId, redirectToSignIn } = auth()
+  const { pathname } = new URL(context.request.url)
+
+  if (userId && pathname === '/') {
+    return context.redirect('/dashboard')
+  }
+
+  if (isProtectedRoute(context.request) && !userId) {
+    return redirectToSignIn()
+  }
+})
+```
+
+## Protected Routes
+
+Routes requiring authentication are defined using `createRouteMatcher`:
+
+```ts
+const isProtectedRoute = createRouteMatcher([
+  '/dashboard',      // Main dashboard page
+  '/api/notes(.*)',  // All note API endpoints
+])
+```
+
+### Route Pattern Matching
+
+**Exact match:** `/dashboard`
+- Matches: `/dashboard`
+- Does not match: `/dashboard/settings`, `/dashboard/`
+
+**Wildcard match:** `/api/notes(.*)`
+- Matches: `/api/notes`, `/api/notes/`, `/api/notes/123`, `/api/notes/123/edit`
+- Uses regex pattern to match all sub-paths
+
+### Adding Protected Routes
+
+To protect additional routes, add them to the array:
+
+```ts
+const isProtectedRoute = createRouteMatcher([
+  '/dashboard',
+  '/dashboard/(.*)',     // Protect all dashboard sub-pages
+  '/settings',
+  '/api/notes(.*)',
+  '/api/user(.*)',
+])
+```
+
+## Authentication Logic
+
+The middleware implements three key behaviors:
+
+### 1. Extract User ID
+
+```ts
+const { userId, redirectToSignIn } = auth()
+```
+
+**How it works:**
+- Reads session token from cookies (`__session` by default)
+- Validates JWT signature with Clerk's public key
+- Extracts `userId` from token claims
+- Returns `null` if token is invalid/expired
+
+**Token structure:**
+```json
+{
+  "sub": "user_2a3b4c5d6e7f",  // userId
+  "iat": 1709654400,
+  "exp": 1709658000,
+  "iss": "https://clerk.padnotes.app"
+}
+```
+
+### 2. Redirect Authenticated Users
+
+```ts
+if (userId && pathname === '/') {
+  return context.redirect('/dashboard')
+}
+```
+
+**Purpose:** Prevent authenticated users from seeing the landing page.
+
+**Behavior:**
+- If user is signed in (`userId` exists)
+- And visits root path (`/`)
+- Redirect to `/dashboard` automatically
+
+**Use cases:**
+- User bookmarks landing page but is already signed in
+- User clicks logo from dashboard (goes to `/`)
+- Direct navigation to `/` from browser
+
+### 3. Protect Private Routes
+
+```ts
+if (isProtectedRoute(context.request) && !userId) {
+  return redirectToSignIn()
+}
+```
+
+**Purpose:** Block unauthenticated access to protected routes.
+
+**Behavior:**
+- Check if current route matches protected pattern
+- If user is NOT signed in (`!userId`)
+- Redirect to Clerk's sign-in page
+
+**Sign-in flow:**
+1. User visits `/dashboard` without session
+2. Middleware redirects to Clerk sign-in page
+3. User authenticates with email/OAuth
+4. Clerk redirects back to `/dashboard` with session token
+5. Middleware allows access
+
+## Redirect Flows
+
+### Sign-In Redirect
+
+```ts
+return redirectToSignIn()
+```
+
+**Full flow:**
+```
+1. User → /dashboard (no session)
+2. Middleware → https://accounts.padnotes.app/sign-in?redirect_url=/dashboard
+3. Clerk → [User authenticates]
+4. Clerk → /dashboard (with session cookie)
+5. Middleware → [Allow access]
+```
+
+**Redirect URL preservation:**
+Clerk automatically preserves the original URL as a query parameter, ensuring users land on their intended destination after sign-in.
+
+### Dashboard Redirect
+
+```ts
+return context.redirect('/dashboard')
+```
+
+**Full flow:**
+```
+1. User → / (with session)
+2. Middleware → /dashboard (302 redirect)
+3. Middleware → [Check authentication]
+4. Middleware → [Allow access to dashboard]
+```
+
+## Authentication Context
+
+Clerk middleware injects authentication data into `locals.auth()`:
+
+### In Astro Pages
+
+```astro
+---
+const { userId, isAuthenticated } = Astro.locals.auth()
+
+if (!isAuthenticated) {
+  return Astro.redirect('/sign-in')
+}
+
+const user = await currentUser()
+---
+
+<h1>Welcome, {user.firstName}!</h1>
+```
+
+### In API Routes
+
+```ts
+// client/src/pages/api/notes/index.ts
+export const GET: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  if (!isAuthenticated) {
+    return new Response(
+      JSON.stringify({ error: 'No autenticado' }),
+      { status: 401 }
+    )
+  }
+
+  // Fetch notes for authenticated user
+  const notes = await db
+    .select()
+    .from(notes)
+    .where(eq(notes.userId, userId))
+}
+```
+
+**Available properties:**
+- `userId`: Clerk user ID (string) or `null`
+- `isAuthenticated`: Boolean convenience flag
+- `sessionId`: Current session ID
+- `orgId`: Organization ID (if using Clerk Organizations)
+- `redirectToSignIn()`: Function to redirect to sign-in page
+
+## Security Considerations
+
+### Session Token Security
+
+Clerk session tokens are:
+- **HTTP-only cookies**: Not accessible via JavaScript (XSS protection)
+- **Secure flag**: Only transmitted over HTTPS in production
+- **SameSite=Lax**: CSRF protection for cross-site requests
+- **Short-lived**: Expire after 60 minutes (configurable in Clerk dashboard)
+
+### API Route Protection
+
+API routes MUST validate authentication in the handler:
+
+```ts
+// ✅ Correct: Validate in handler
+export const POST: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+  
+  if (!isAuthenticated) {
+    return new Response(null, { status: 401 })
+  }
+  
+  // Process request
+}
+```
+
+**Why double-check in API routes?**
+- Middleware protects routes from browser requests
+- API routes may be called directly (curl, Postman, etc.)
+- Defense in depth: Multiple validation layers
+
+### User Isolation
+
+Always filter database queries by `userId`:
+
+```ts
+// ✅ Correct: Filter by authenticated user
+const notes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+
+// ❌ Incorrect: Returns all users' notes
+const notes = await db.select().from(notes)
+```
+
+See [Database Schema](/architecture/database-schema#security) for query patterns.
+
+## Rate Limiting Integration
+
+Middleware works with Upstash Redis rate limiting:
+
+```ts
+// After authentication check in API route
+const { success, reset } = await writeRatelimit.limit(userId)
+
+if (!success) {
+  return new Response(
+    JSON.stringify({
+      error: 'Demasiadas solicitudes',
+      retryAfter: Math.ceil((reset - Date.now()) / 1000),
+    }),
+    { 
+      status: 429,
+      headers: {
+        'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
+      },
+    }
+  )
+}
+```
+
+**Rate limit flow:**
+1. Middleware validates authentication
+2. API handler checks rate limit using `userId` as key
+3. If limit exceeded, return 429 with retry time
+4. Client backs off and retries after delay
+
+See [Technology Stack](/architecture/stack#rate-limiting-upstash-redis) for rate limit configuration.
+
+## Error Handling
+
+### Invalid Sessions
+
+Expired or invalid tokens are handled gracefully:
+
+```ts
+const { userId } = auth()
+// If token invalid: userId = null
+
+if (isProtectedRoute(context.request) && !userId) {
+  return redirectToSignIn()
+}
+```
+
+**User experience:**
+- Expired session → Redirected to sign-in
+- After sign-in → Redirected back to original page
+- No error page or cryptic message
+
+### Network Errors
+
+Clerk middleware handles Clerk API failures:
+
+- **Clerk API down**: Falls back to cached public keys (5-minute TTL)
+- **Network timeout**: Retries with exponential backoff
+- **Invalid response**: Treats as unauthenticated and redirects
+
+## Localization
+
+Clerk UI is localized to Spanish (Mexico):
+
+```js
+// astro.config.mjs
+import { esMX } from '@clerk/localizations'
+
+clerk({
+  localization: esMX,
+})
+```
+
+**Localized elements:**
+- Sign-in/sign-up forms
+- Error messages
+- Button labels
+- Email templates (configured in Clerk dashboard)
+
+See Clerk's [localization documentation](https://clerk.com/docs/localization/overview) for customization options.
+
+## Testing Middleware
+
+### Manual Testing
+
+**Test protected routes:**
+```bash
+# Should redirect to sign-in
+curl -I http://localhost:4321/dashboard
+
+# Should redirect to sign-in
+curl http://localhost:4321/api/notes
+```
+
+**Test authenticated access:**
+```bash
+# Extract session token from browser DevTools → Application → Cookies
+curl -H "Cookie: __session=<token>" http://localhost:4321/api/notes
+```
+
+**Test root redirect:**
+```bash
+# With session, should redirect to /dashboard
+curl -I -H "Cookie: __session=<token>" http://localhost:4321/
+```
+
+### Common Issues
+
+**Issue:** Infinite redirect loop
+```
+/ → /dashboard → / → /dashboard → ...
+```
+
+**Solution:** Ensure dashboard route is properly protected:
+```ts
+const isProtectedRoute = createRouteMatcher(['/dashboard'])
+```
+
+**Issue:** API routes return HTML instead of JSON error
+
+**Solution:** Check authentication in API handler, not just middleware:
+```ts
+if (!isAuthenticated) {
+  return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+    status: 401,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+```
+
+## Future Enhancements
+
+- **Role-based access control**: Restrict routes by user role (admin, editor, viewer)
+- **Organization support**: Multi-tenant workspace isolation
+- **Session duration**: Custom session timeouts per user type
+- **Audit logging**: Track authentication events for security monitoring
+- **Webhook validation**: Verify Clerk webhook signatures for user sync

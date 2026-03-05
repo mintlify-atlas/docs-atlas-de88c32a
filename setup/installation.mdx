@@ -1,0 +1,115 @@
+---
+title: 'Installation'
+description: 'Get started with Pad Notes by setting up your local development environment'
+---
+
+## Prerequisites
+
+Before installing Pad Notes, ensure you have the following installed on your system:
+
+- **Node.js** 18.x or higher
+- **pnpm** 10.15.0 or higher (recommended package manager)
+
+<Note>
+  Pad Notes uses pnpm as its package manager. While npm and yarn may work, pnpm is recommended for consistency with the project configuration.
+</Note>
+
+## Installation Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone the Pad Notes repository to your local machine:
+
+    ```bash
+    git clone https://github.com/your-org/pad-notes.git
+    cd pad-notes/client
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all required dependencies using pnpm:
+
+    <CodeGroup>
+      ```bash pnpm
+      pnpm install
+      ```
+
+      ```bash npm
+      npm install
+      ```
+
+      ```bash yarn
+      yarn install
+      ```
+    </CodeGroup>
+
+    This will install all dependencies listed in `package.json`, including:
+    - **Astro** - Web framework
+    - **React** - UI library
+    - **Clerk** - Authentication
+    - **Drizzle ORM** - Database toolkit
+    - **Upstash** - Rate limiting
+    - **Tailwind CSS** - Styling
+  </Step>
+
+  <Step title="Set up environment variables">
+    Create a `.env` file in the client directory. You'll configure this in the next sections:
+
+    ```bash
+    touch .env
+    ```
+
+    <Warning>
+      Never commit your `.env` file to version control. It contains sensitive credentials.
+    </Warning>
+  </Step>
+
+  <Step title="Verify installation">
+    Verify that the installation was successful:
+
+    ```bash
+    pnpm astro --version
+    ```
+
+    You should see the Astro version (5.13.2 or higher).
+  </Step>
+</Steps>
+
+## Project Structure
+
+After installation, your project structure will look like this:
+
+```text
+client/
+├── src/
+│   ├── db/              # Database schema and client
+│   ├── lib/             # Utilities (rate limiting, validations)
+│   ├── pages/           # Astro pages and API routes
+│   │   └── api/notes/   # Notes API endpoints
+│   └── middleware.ts    # Clerk authentication middleware
+├── drizzle/             # Database migrations (generated)
+├── public/              # Static assets
+├── astro.config.mjs     # Astro configuration
+├── drizzle.config.ts    # Drizzle ORM configuration
+└── package.json         # Dependencies and scripts
+```
+
+## Development Scripts
+
+Once installed, you can use these commands:
+
+| Command | Description |
+|---------|-------------|
+| `pnpm dev` | Start development server at `localhost:4321` |
+| `pnpm build` | Build production site |
+| `pnpm preview` | Preview production build locally |
+| `pnpm lint` | Run ESLint on source files |
+
+## Next Steps
+
+After installation, continue with:
+
+1. [Authentication Setup](/setup/authentication) - Configure Clerk for user authentication
+2. [Database Setup](/setup/database) - Set up Turso database and run migrations
+3. [Rate Limiting](/setup/rate-limiting) - Configure Upstash Redis for API rate limiting
+4. [Deployment](/setup/deployment) - Deploy to Vercel

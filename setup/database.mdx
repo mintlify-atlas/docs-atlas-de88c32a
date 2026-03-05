@@ -1,0 +1,352 @@
+---
+title: 'Database'
+description: 'Set up Turso database with Drizzle ORM for Pad Notes'
+---
+
+## Overview
+
+Pad Notes uses [Turso](https://turso.tech), a distributed SQLite database, along with [Drizzle ORM](https://orm.drizzle.team) for type-safe database operations.
+
+## Prerequisites
+
+- Completed [Installation](/setup/installation)
+- Turso CLI installed
+- A Turso account
+
+## Installing Turso CLI
+
+<CodeGroup>
+  ```bash macOS/Linux
+  curl -sSfL https://get.tur.so/install.sh | bash
+  ```
+
+  ```bash Windows
+  powershell -c "irm https://get.tur.so/install.ps1 | iex"
+  ```
+</CodeGroup>
+
+Verify installation:
+
+```bash
+turso --version
+```
+
+## Setup Steps
+
+<Steps>
+  <Step title="Authenticate with Turso">
+    Log in to your Turso account:
+
+    ```bash
+    turso auth login
+    ```
+
+    This will open your browser for authentication.
+  </Step>
+
+  <Step title="Create a database">
+    Create a new Turso database for Pad Notes:
+
+    ```bash
+    turso db create pad-notes
+    ```
+
+    For production, you can specify a location closer to your users:
+
+    ```bash
+    turso db create pad-notes --location iad  # Washington DC
+    # Other locations: lax, fra, syd, hkg, etc.
+    ```
+
+    <Note>
+      Turso allows you to create replicas in multiple regions for lower latency worldwide.
+    </Note>
+  </Step>
+
+  <Step title="Get database credentials">
+    Get your database URL:
+
+    ```bash
+    turso db show pad-notes --url
+    ```
+
+    Create an authentication token:
+
+    ```bash
+    turso db tokens create pad-notes
+    ```
+
+    Copy both the URL and token for the next step.
+  </Step>
+
+  <Step title="Add environment variables">
+    Add your Turso credentials to `.env`:
+
+    ```bash .env
+    TURSO_DATABASE_URL=libsql://pad-notes-your-org.turso.io
+    TURSO_AUTH_TOKEN=eyJhbGciOiJFZERTQS...
+    ```
+
+    <Warning>
+      Keep your auth token secure. It provides full access to your database.
+    </Warning>
+  </Step>
+
+  <Step title="Run database migrations">
+    Generate and apply the initial schema migration:
+
+    ```bash
+    # Generate migration
+    pnpm drizzle-kit generate
+
+    # Apply migration to database
+    pnpm drizzle-kit migrate
+    ```
+
+    You should see output confirming the migration was applied successfully.
+  </Step>
+</Steps>
+
+## Database Schema
+
+Pad Notes uses a simple schema defined in `src/db/schema.ts`:
+
+```typescript src/db/schema.ts
+import { sql } from 'drizzle-orm'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: text('id')
+      .primaryKey()
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    textNote: text('text_note').notNull(),
+    userId: text('user_id').notNull(),
+    createdAt: integer('created_at', {
+      mode: 'timestamp',
+    })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    // Index on userId for optimized user queries
+    userIdIdx: index('user_id_idx').on(table.userId),
+  }),
+)
+```
+
+### Schema Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | UUID | Primary key, auto-generated |
+| `title` | Text | Note title (3-100 characters) |
+| `textNote` | Text | Note content (3-400 characters) |
+| `userId` | Text | Clerk user ID (foreign key) |
+| `createdAt` | Timestamp | Auto-set on creation |
+| `updatedAt` | Timestamp | Auto-updated on modification |
+
+### Indexes
+
+- **user_id_idx** - Index on `userId` for fast user-specific queries
+
+## Drizzle Configuration
+
+The Drizzle configuration in `drizzle.config.ts`:
+
+```typescript drizzle.config.ts
+import { defineConfig } from 'drizzle-kit'
+
+export default defineConfig({
+  schema: './src/db/schema.ts',
+  out: './drizzle',
+  dialect: 'turso',
+  dbCredentials: {
+    url: process.env.TURSO_DATABASE_URL!,
+    authToken: process.env.TURSO_AUTH_TOKEN!,
+  },
+  verbose: true,  // Show detailed logs during migrations
+  strict: true,   // Strict schema validation
+})
+```
+
+## Database Client
+
+The database client is initialized in `src/db/index.ts`:
+
+```typescript src/db/index.ts
+import { createClient } from '@libsql/client'
+import { drizzle } from 'drizzle-orm/libsql'
+import * as schema from './schema'
+
+// Create libSQL client for Turso
+const client = createClient({
+  url: import.meta.env.TURSO_DATABASE_URL!,
+  authToken: import.meta.env.TURSO_AUTH_TOKEN!,
+})
+
+// Create Drizzle instance with typed schema
+export const db = drizzle(client, { schema })
+
+// Export inferred types for TypeScript
+export type Note = typeof schema.notes.$inferSelect
+export type NewNote = typeof schema.notes.$inferInsert
+```
+
+## Using the Database
+
+### Query Examples
+
+Fetch all notes for a user:
+
+```typescript
+import { db } from '@/db'
+import { notes } from '@/db/schema'
+import { desc, eq } from 'drizzle-orm'
+
+const userNotes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))
+```
+
+Create a new note:
+
+```typescript
+const [newNote] = await db
+  .insert(notes)
+  .values({
+    title: 'My First Note',
+    textNote: 'This is the note content',
+    userId: userId,
+  })
+  .returning()
+```
+
+Update a note:
+
+```typescript
+const [updatedNote] = await db
+  .update(notes)
+  .set({
+    title: 'Updated Title',
+    textNote: 'Updated content',
+  })
+  .where(eq(notes.id, noteId))
+  .returning()
+```
+
+Delete a note:
+
+```typescript
+const [deletedNote] = await db
+  .delete(notes)
+  .where(eq(notes.id, noteId))
+  .returning()
+```
+
+## Validation
+
+Pad Notes uses Zod schemas for input validation before database operations:
+
+```typescript src/lib/validations.ts
+import { z } from 'zod'
+
+// Schema for creating notes (POST)
+export const createNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim(),
+  textNote: z.string().min(3).max(400).trim(),
+})
+
+// Schema for updating notes (PUT)
+export const updateNoteSchema = z.object({
+  title: z.string().min(3).max(100).trim().optional(),
+  textNote: z.string().min(3).max(400).trim().optional(),
+})
+
+// Inferred types
+export type CreateNoteInput = z.infer<typeof createNoteSchema>
+export type UpdateNoteInput = z.infer<typeof updateNoteSchema>
+```
+
+## Schema Migrations
+
+When you modify the schema:
+
+<Steps>
+  <Step title="Update schema.ts">
+    Make your changes to `src/db/schema.ts`
+  </Step>
+
+  <Step title="Generate migration">
+    ```bash
+    pnpm drizzle-kit generate
+    ```
+
+    This creates a new migration file in the `drizzle/` directory.
+  </Step>
+
+  <Step title="Review migration">
+    Check the generated SQL in `drizzle/` to ensure it matches your intent.
+  </Step>
+
+  <Step title="Apply migration">
+    ```bash
+    pnpm drizzle-kit migrate
+    ```
+  </Step>
+</Steps>
+
+## Drizzle Studio
+
+Drizzle provides a web UI to browse and edit your database:
+
+```bash
+pnpm drizzle-kit studio
+```
+
+This opens a local interface at `https://local.drizzle.studio` where you can:
+- Browse tables and data
+- Run queries
+- Edit records
+- View schema
+
+## Troubleshooting
+
+### "Unable to connect to database"
+
+Verify your `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` are correct:
+
+```bash
+turso db show pad-notes
+turso db tokens create pad-notes
+```
+
+### "Migration failed"
+
+If a migration fails:
+1. Check the error message in the console
+2. Review the generated SQL in `drizzle/`
+3. You may need to manually fix the database state
+
+### "Token expired"
+
+Turso tokens expire after a certain period. Generate a new token:
+
+```bash
+turso db tokens create pad-notes
+```
+
+Update your `.env` file with the new token.
+
+## Next Steps
+
+- [Rate Limiting](/setup/rate-limiting) - Configure API rate limits
+- [Deployment](/setup/deployment) - Deploy to production

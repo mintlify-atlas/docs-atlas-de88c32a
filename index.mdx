@@ -1,97 +1,195 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: Introduction
+description: Welcome to Pad Notes - A modern, secure note-taking application built with Astro, React, and edge-first technologies
 ---
 
-## Setting up
+Pad Notes is a modern web application designed to help you organize your ideas simply and quickly. Built with cutting-edge technologies, it provides a clean, minimalist experience for storing information, ideas, and everything that inspires your day-to-day life.
 
-Get your documentation site up and running in minutes.
+## What is Pad Notes?
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+Pad Notes is a full-stack SaaS application that combines the power of Astro's server-side rendering with React's interactivity, Clerk's robust authentication, and Turso's edge database to deliver a fast, secure, and scalable note-taking experience.
 
-## Make it yours
+The application features:
+- **Secure authentication** with Google OAuth and email/password support
+- **Personal note management** with full CRUD operations
+- **Rate limiting** to protect against abuse
+- **Real-time search** with match highlighting
+- **User isolation** ensuring each user only accesses their own notes
+- **Responsive design** that works seamlessly across devices
 
-Design a docs site that looks great and empowers your users.
+## Key Features
 
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Clerk Authentication" icon="shield-check">
+    Robust login system with Google OAuth and Email/Password authentication. Users are automatically redirected to their dashboard after signing in.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  
+  <Card title="Edge Database with Turso" icon="database">
+    Lightning-fast data access using Turso's libSQL database with global replication. Drizzle ORM provides type-safe database operations.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  
+  <Card title="Rate Limiting Protection" icon="gauge-high">
+    Built-in protection against abuse using Upstash Redis with sliding window rate limits: 30 reads per 10 seconds and 10 writes per 10 seconds.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  
+  <Card title="Zod Schema Validation" icon="check-circle">
+    Type-safe data validation for all API endpoints. Ensures data integrity with schemas for creating and updating notes.
   </Card>
-</Columns>
+  
+  <Card title="Protected Routes" icon="lock">
+    Middleware-based route protection ensures only authenticated users can access the dashboard and API endpoints.
+  </Card>
+  
+  <Card title="Real-time Search" icon="magnifying-glass">
+    Filter through your notes instantly with client-side search that highlights matching text, making it easy to find what you need.
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Architecture Overview
 
-Everything you need to create world-class documentation.
+Pad Notes follows a modern full-stack architecture:
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+### Frontend Layer
+- **Astro** - Server-side rendering and routing
+- **React** - Interactive UI components
+- **Tailwind CSS 4** - Utility-first styling with the latest features
 
-## Need inspiration?
+### Backend Layer
+- **Astro API Routes** - Serverless functions for CRUD operations
+- **Drizzle ORM** - Type-safe database queries
+- **Zod** - Runtime schema validation
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+### Data Layer
+- **Turso (libSQL)** - Edge-first SQLite database
+- **Upstash Redis** - Rate limiting and caching
+
+### Authentication
+- **Clerk** - Complete authentication solution with OAuth support
+
+## Database Schema
+
+The application uses a simple, efficient schema defined with Drizzle ORM:
+
+```typescript src/db/schema.ts
+import { sql } from 'drizzle-orm'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: text('id')
+      .primaryKey()
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    textNote: text('text_note').notNull(),
+    userId: text('user_id').notNull(),
+    createdAt: integer('created_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    userIdIdx: index('user_id_idx').on(table.userId),
+  }),
+)
+```
+
+<Note>
+  The `userId` field is indexed to optimize queries when filtering notes by user, ensuring fast performance even with many users.
+</Note>
+
+## Security Features
+
+### User Isolation
+
+All database queries include user ID verification to ensure users can only access their own notes:
+
+```typescript src/pages/api/notes/index.ts
+const userNotes = await db
+  .select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))
+```
+
+### Rate Limiting
+
+Protection against abuse is implemented using Upstash Redis with sliding window rate limits:
+
+```typescript src/lib/ratelimit.ts
+export const writeRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/write',
+})
+
+export const readRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/read',
+})
+```
+
+### Middleware Protection
+
+Routes are protected using Clerk's middleware:
+
+```typescript src/middleware.ts
+import { clerkMiddleware, createRouteMatcher } from '@clerk/astro/server'
+
+const isProtectedRoute = createRouteMatcher(['/dashboard', '/api/notes(.*)'])
+
+export const onRequest = clerkMiddleware((auth, context) => {
+  const { userId, redirectToSignIn } = auth()
+  
+  if (isProtectedRoute(context.request) && !userId) {
+    return redirectToSignIn()
+  }
+})
+```
+
+## Technology Stack
+
+<AccordionGroup>
+  <Accordion title="Frontend Technologies">
+    - **Astro 5.13.2** - The web framework for content-driven websites
+    - **React 18.3.1** - Library for building user interfaces
+    - **Tailwind CSS 4.1.12** - Utility-first CSS framework
+    - **Lucide React** - Beautiful, consistent icon set
+    - **@radix-ui/react-dialog** - Accessible modal dialogs
+  </Accordion>
+  
+  <Accordion title="Backend & Database">
+    - **Drizzle ORM 0.44.7** - TypeScript ORM for SQL databases
+    - **@libsql/client** - Client for Turso/libSQL databases
+    - **Zod 4.1.12** - TypeScript-first schema validation
+  </Accordion>
+  
+  <Accordion title="Authentication & Security">
+    - **@clerk/astro 2.15.1** - Clerk integration for Astro
+    - **@upstash/ratelimit 2.0.7** - Rate limiting library
+    - **@upstash/redis 1.35.6** - Redis client for Upstash
+  </Accordion>
+  
+  <Accordion title="Deployment">
+    - **@astrojs/vercel** - Vercel adapter for Astro
+    - **Vercel** - Deployment platform
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Get started with Pad Notes in minutes. Learn how to set up your account and create your first note.
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the API endpoints and learn how to integrate with Pad Notes programmatically.
+  </Card>
+</CardGroup>

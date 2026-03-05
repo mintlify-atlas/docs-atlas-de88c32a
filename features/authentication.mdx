@@ -1,0 +1,228 @@
+---
+title: 'Authentication'
+description: 'Learn how Pad Notes secures your account with Clerk authentication'
+icon: 'shield-check'
+---
+
+Pad Notes uses [Clerk](https://clerk.com) to provide secure, seamless authentication for all users. The authentication system protects your notes and ensures only you can access your personal workspace.
+
+## Sign In Options
+
+Pad Notes offers multiple ways to authenticate:
+
+<CardGroup cols={2}>
+  <Card title="Email & Password" icon="envelope">
+    Traditional authentication with your email address and a secure password
+  </Card>
+  <Card title="Google OAuth" icon="google">
+    Quick sign-in using your existing Google account
+  </Card>
+</CardGroup>
+
+### Getting Started
+
+When you first visit Pad Notes, you'll see the landing page with a prominent "Iniciar sesión" (Sign In) button:
+
+```astro
+// From: client/src/pages/index.astro
+<SignedOut>
+  <SignInButton
+    mode="modal"
+    forceRedirectUrl={urlRedirect}
+  >
+    Iniciar sesión
+  </SignInButton>
+</SignedOut>
+```
+
+Clicking this button opens Clerk's authentication modal, where you can:
+- Sign in with an existing account
+- Create a new account
+- Use Google OAuth for instant access
+
+## Protected Routes
+
+Pad Notes automatically protects your sensitive pages and API endpoints. The middleware ensures you're authenticated before accessing:
+
+- `/dashboard` - Your personal notes workspace
+- `/api/notes` - All note management endpoints
+
+```typescript
+// From: client/src/middleware.ts:3
+const isProtectedRoute = createRouteMatcher(['/dashboard', '/api/notes(.*)'])
+
+export const onRequest = clerkMiddleware((auth, context) => {
+  const { userId, redirectToSignIn } = auth()
+  const { pathname } = new URL(context.request.url)
+
+  if (userId && pathname === '/') {
+    return context.redirect('/dashboard')
+  }
+
+  if (isProtectedRoute(context.request) && !userId) {
+    return redirectToSignIn()
+  }
+})
+```
+
+<Info>
+  If you're already signed in and visit the homepage, you'll be automatically redirected to your dashboard.
+</Info>
+
+## Session Management
+
+### Automatic Redirects
+
+Pad Notes intelligently handles navigation based on your authentication state:
+
+| Your Status | Visit Homepage | Visit Dashboard |
+|-------------|----------------|----------------|
+| **Signed Out** | See landing page | Redirected to sign in |
+| **Signed In** | Redirected to dashboard | See your notes |
+
+### User Profile
+
+Once authenticated, Pad Notes displays your personalized welcome message using information from your Clerk profile:
+
+```astro
+// From: client/src/components/Dashboard.astro:12
+const user = await Astro.locals.currentUser()
+
+const userName =
+  user?.firstName || user?.username || user?.emailAddresses[0]?.emailAddress || 'Usuario'
+```
+
+The app prioritizes displaying:
+1. Your first name (if provided)
+2. Your username (if set)
+3. Your email address
+4. A default "Usuario" greeting
+
+### User Button
+
+The navigation bar includes Clerk's UserButton component, which provides quick access to:
+
+- Account settings
+- Profile management
+- Sign out option
+
+```astro
+// From: client/src/components/Nav.astro:18
+<UserButton />
+```
+
+## API Authentication
+
+Every API request is authenticated server-side. Here's how it works:
+
+```typescript
+// From: client/src/pages/api/notes/index.ts:9
+export const GET: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  if (!isAuthenticated) {
+    return new Response(JSON.stringify({ error: 'No autenticado' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  // ... fetch user's notes
+}
+```
+
+<Warning>
+  All API endpoints return a `401 Unauthorized` response if you're not authenticated. The frontend will prompt you to sign in again.
+</Warning>
+
+## User Isolation
+
+Your notes are completely private. The database schema ensures notes are tied to your unique user ID:
+
+```typescript
+// From: client/src/db/schema.ts:4
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: text('id').primaryKey(),
+    title: text('title').notNull(),
+    textNote: text('text_note').notNull(),
+    userId: text('user_id').notNull(),  // Your unique Clerk user ID
+    // ...
+  },
+  (table) => ({
+    userIdIdx: index('user_id_idx').on(table.userId),  // Indexed for fast queries
+  })
+)
+```
+
+Every database query filters by your `userId`, ensuring you only see your own notes.
+
+## Security Features
+
+<AccordionGroup>
+  <Accordion title="Session Security">
+    Clerk handles all session management, including:
+    - Secure token storage
+    - Automatic token refresh
+    - Session expiration handling
+    - Cross-device session management
+  </Accordion>
+  
+  <Accordion title="Password Requirements">
+    When creating an account with email/password, Clerk enforces:
+    - Minimum password length
+    - Password complexity requirements
+    - Protection against common passwords
+    - Secure password hashing (never stored in plaintext)
+  </Accordion>
+  
+  <Accordion title="OAuth Security">
+    Google OAuth integration provides:
+    - No password storage required
+    - Leverages Google's security infrastructure
+    - Automatic account linking
+    - Revocable access tokens
+  </Accordion>
+</AccordionGroup>
+
+## Localization
+
+Pad Notes is configured with Spanish (Mexico) localization for all authentication flows:
+
+```javascript
+// From: client/astro.config.mjs:48
+clerk({
+  localization: esMX,
+})
+```
+
+This ensures all authentication UI elements, error messages, and prompts appear in Spanish.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Can't access my dashboard">
+    If you're redirected to sign in when trying to access your dashboard:
+    1. Your session may have expired
+    2. Clear your browser cookies and sign in again
+    3. Ensure cookies are enabled in your browser
+  </Accordion>
+  
+  <Accordion title="Google OAuth not working">
+    If Google sign-in fails:
+    1. Ensure you're not blocking third-party cookies
+    2. Try a different browser
+    3. Check that you have a stable internet connection
+  </Accordion>
+  
+  <Accordion title="API returns 401 errors">
+    If you're seeing authentication errors:
+    1. Sign out and sign in again to refresh your session
+    2. Check if your session has expired
+    3. Clear your browser cache and cookies
+  </Accordion>
+</AccordionGroup>
+
+<Info>
+  Pad Notes never stores your password directly. All authentication is handled securely by Clerk's infrastructure.
+</Info>

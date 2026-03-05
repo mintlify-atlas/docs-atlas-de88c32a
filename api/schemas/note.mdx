@@ -1,0 +1,116 @@
+---
+title: 'Note Schema'
+description: 'Database schema for the notes table using Drizzle ORM'
+---
+
+## Overview
+
+The Note schema defines the structure of the notes table in the SQLite database. It uses Drizzle ORM to define the table structure, columns, and indexes.
+
+## Database Schema
+
+### Table: `notes`
+
+<ResponseField name="id" type="text" required>
+  Primary key for the note. Auto-generated UUID using `crypto.randomUUID()`.
+  
+  - **Column**: `id`
+  - **Constraints**: PRIMARY KEY, NOT NULL
+  - **Default**: Auto-generated UUID
+</ResponseField>
+
+<ResponseField name="title" type="text" required>
+  The title of the note.
+  
+  - **Column**: `title`
+  - **Constraints**: NOT NULL
+</ResponseField>
+
+<ResponseField name="textNote" type="text" required>
+  The main content of the note.
+  
+  - **Column**: `text_note`
+  - **Constraints**: NOT NULL
+</ResponseField>
+
+<ResponseField name="userId" type="text" required>
+  The ID of the user who owns this note.
+  
+  - **Column**: `user_id`
+  - **Constraints**: NOT NULL
+  - **Indexed**: Yes (optimized for queries by user)
+</ResponseField>
+
+<ResponseField name="createdAt" type="timestamp" required>
+  Timestamp when the note was created.
+  
+  - **Column**: `created_at`
+  - **Type**: Integer (timestamp mode)
+  - **Constraints**: NOT NULL
+  - **Default**: `unixepoch()` (current Unix timestamp)
+</ResponseField>
+
+<ResponseField name="updatedAt" type="timestamp" required>
+  Timestamp when the note was last updated.
+  
+  - **Column**: `updated_at`
+  - **Type**: Integer (timestamp mode)
+  - **Constraints**: NOT NULL
+  - **Default**: `unixepoch()` (current Unix timestamp)
+</ResponseField>
+
+## Indexes
+
+The notes table includes the following indexes for query optimization:
+
+- **`user_id_idx`**: Index on the `userId` column to optimize queries filtering by user
+
+## TypeScript Type Definition
+
+```typescript
+import { sql } from 'drizzle-orm'
+import { index, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+
+export const notes = sqliteTable(
+  'notes',
+  {
+    id: text('id')
+      .primaryKey()
+      .notNull()
+      .$defaultFn(() => crypto.randomUUID()),
+    title: text('title').notNull(),
+    textNote: text('text_note').notNull(),
+    userId: text('user_id').notNull(),
+    createdAt: integer('created_at', {
+      mode: 'timestamp',
+    })
+      .notNull()
+      .default(sql`(unixepoch())`),
+    updatedAt: integer('updated_at', { mode: 'timestamp' })
+      .notNull()
+      .default(sql`(unixepoch())`),
+  },
+  (table) => ({
+    userIdIdx: index('user_id_idx').on(table.userId),
+  }),
+)
+```
+
+## Example Record
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "title": "My First Note",
+  "textNote": "This is the content of my note.",
+  "userId": "user_123456789",
+  "createdAt": 1709654400,
+  "updatedAt": 1709654400
+}
+```
+
+## Notes
+
+- The `createdAt` and `updatedAt` fields are stored as Unix timestamps (integer seconds since epoch)
+- The `id` field is automatically generated when a new note is created
+- The `user_id_idx` index significantly improves performance when querying notes by user ID

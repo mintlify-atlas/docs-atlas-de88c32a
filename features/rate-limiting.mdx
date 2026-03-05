@@ -1,0 +1,438 @@
+---
+title: 'Rate Limiting'
+description: 'How Pad Notes protects your experience with smart API rate limits'
+icon: 'gauge-high'
+---
+
+Pad Notes implements intelligent rate limiting using [Upstash Redis](https://upstash.com) to protect the application from abuse while ensuring a smooth experience for normal usage.
+
+## Why Rate Limiting?
+
+<CardGroup cols={2}>
+  <Card title="Prevent Abuse" icon="shield-halved">
+    Stops malicious actors from overwhelming the server with requests
+  </Card>
+  <Card title="Fair Resource Usage" icon="scale-balanced">
+    Ensures all users get equal access to API resources
+  </Card>
+  <Card title="Cost Control" icon="dollar-sign">
+    Limits database operations to control infrastructure costs
+  </Card>
+  <Card title="Performance" icon="rocket">
+    Prevents any single user from degrading performance for others
+  </Card>
+</CardGroup>
+
+## Rate Limit Configuration
+
+Pad Notes uses different limits for read and write operations:
+
+```typescript
+// From: client/src/lib/ratelimit.ts:11
+// Rate limiter for write operations (POST, PUT, DELETE)
+export const writeRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/write',
+})
+
+// Rate limiter for read operations (GET)
+export const readRatelimit = new Ratelimit({
+  redis,
+  limiter: Ratelimit.slidingWindow(30, '10 s'),
+  analytics: true,
+  prefix: '@upstash/ratelimit/read',
+})
+```
+
+### Limits Overview
+
+| Operation Type | Requests Allowed | Time Window | Examples |
+|---------------|------------------|-------------|----------|
+| **Read** | 30 requests | 10 seconds | Fetching notes (GET /api/notes) |
+| **Write** | 10 requests | 10 seconds | Create, update, delete notes |
+
+<Info>
+  These limits are **per user**, not global. Your rate limit is independent of other users' activity.
+</Info>
+
+## Sliding Window Algorithm
+
+Pad Notes uses a **sliding window** algorithm, which is more flexible than fixed windows:
+
+```typescript
+// From: client/src/lib/ratelimit.ts:13
+limiter: Ratelimit.slidingWindow(10, '10 s')
+```
+
+### How It Works
+
+<Accordion title="Sliding Window Explanation">
+  Instead of resetting the count at fixed intervals (like every 10 seconds at :00, :10, :20), a sliding window tracks requests over the past 10 seconds from the current moment.
+
+  **Example:**
+  - At 12:00:05, you can make 10 requests
+  - At 12:00:10, the window slides - requests from before 12:00:00 are no longer counted
+  - This prevents burst abuse at window boundaries
+</Accordion>
+
+### Advantages Over Fixed Windows
+
+- **Prevents boundary gaming**: Users can't exploit fixed reset times
+- **Smoother distribution**: Encourages even spacing of requests
+- **Better user experience**: More predictable behavior
+
+## Protected Endpoints
+
+### Read Operations (30 per 10s)
+
+**GET /api/notes** - Fetch all notes
+
+```typescript
+// From: client/src/pages/api/notes/index.ts:19
+export const GET: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  // Rate limiting
+  const { success, reset } = await readRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(Math.ceil((reset - Date.now()) / 1000)),
+        },
+      },
+    )
+  }
+  // ... fetch notes
+}
+```
+
+### Write Operations (10 per 10s)
+
+**POST /api/notes** - Create new note
+
+```typescript
+// From: client/src/pages/api/notes/index.ts:68
+export const POST: APIRoute = async ({ request, locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  // Rate limiting
+  const { success, reset } = await writeRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      { status: 429 }
+    )
+  }
+  // ... create note
+}
+```
+
+**PUT /api/notes/[id]** - Update existing note
+
+```typescript
+// From: client/src/pages/api/notes/[id].ts:29
+export const PUT: APIRoute = async ({ params, request, locals }) => {
+  // Rate limiting
+  const { success, reset } = await writeRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      { status: 429 }
+    )
+  }
+  // ... update note
+}
+```
+
+**DELETE /api/notes/[id]** - Delete note
+
+```typescript
+// From: client/src/pages/api/notes/[id].ts:117
+export const DELETE: APIRoute = async ({ params, locals }) => {
+  // Rate limiting
+  const { success, reset } = await writeRatelimit.limit(userId)
+  if (!success) {
+    return new Response(
+      JSON.stringify({
+        error: 'Demasiadas solicitudes, intenta en unos segundos',
+        retryAfter: Math.ceil((reset - Date.now()) / 1000),
+      }),
+      { status: 429 }
+    )
+  }
+  // ... delete note
+}
+```
+
+## User Experience
+
+### When You Hit the Limit
+
+If you exceed the rate limit, you'll see a toast notification:
+
+```jsx
+// From: client/src/components/ListNotes.jsx:32
+if (response.status === 429) {
+  toast.error({
+    text: 'Demasiadas solicitudes, intenta en unos segundos',
+  })
+  return
+}
+```
+
+```jsx
+// From: client/src/components/SendNotes.jsx:29
+if (response.status === 429) {
+  toast.error({
+    text: 'Demasiadas solicitudes, intenta en unos segundos',
+  })
+  return
+}
+```
+
+### HTTP Response Details
+
+When rate limited, the API returns:
+
+**Status Code:** `429 Too Many Requests`
+
+**Response Body:**
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 5  // Seconds until you can retry
+}
+```
+
+**Headers:**
+- `Retry-After`: Number of seconds to wait before retrying
+- `Content-Type`: `application/json`
+
+<Info>
+  The `retryAfter` value tells you exactly how many seconds to wait before your next request will succeed.
+</Info>
+
+## Redis-Based Tracking
+
+Pad Notes uses Upstash Redis to track rate limits:
+
+```typescript
+// From: client/src/lib/ratelimit.ts:5
+const redis = new Redis({
+  url: import.meta.env.UPSTASH_REDIS_REST_URL!,
+  token: import.meta.env.UPSTASH_REDIS_REST_TOKEN!,
+})
+```
+
+### Why Redis?
+
+<CardGroup cols={2}>
+  <Card title="Fast" icon="bolt">
+    In-memory storage provides microsecond-level latency
+  </Card>
+  <Card title="Distributed" icon="network-wired">
+    Works across multiple server instances
+  </Card>
+  <Card title="Accurate" icon="bullseye">
+    Atomic operations ensure precise counting
+  </Card>
+  <Card title="Automatic Cleanup" icon="broom">
+    Old entries expire automatically, no manual cleanup
+  </Card>
+</CardGroup>
+
+### Per-User Tracking
+
+Rate limits are tracked per Clerk `userId`:
+
+```typescript
+// From: client/src/pages/api/notes/index.ts:20
+const { success, reset } = await readRatelimit.limit(userId)
+```
+
+This ensures:
+- Your rate limit is independent of other users
+- Multi-device usage counts toward the same limit (same user ID)
+- Fair distribution of resources
+
+## Analytics
+
+Rate limiting analytics are enabled:
+
+```typescript
+// From: client/src/lib/ratelimit.ts:14
+analytics: true,
+```
+
+This allows monitoring:
+- How often users hit rate limits
+- Peak usage times
+- Potential abuse patterns
+- Whether limits need adjustment
+
+## Normal Usage Scenarios
+
+### Will I Hit the Limit?
+
+For typical usage, you're unlikely to encounter rate limits:
+
+<AccordionGroup>
+  <Accordion title="Reading Notes (30 per 10 seconds)">
+    **Normal usage:**
+    - Loading dashboard: 1 request
+    - Refreshing page: 1 request
+    - Clicking between views: 0 requests (client-side search)
+
+    You'd need to refresh the page 30 times in 10 seconds to hit the limit.
+  </Accordion>
+  
+  <Accordion title="Creating Notes (10 per 10 seconds)">
+    **Normal usage:**
+    - Creating one note: 1 request
+    - Creating multiple notes: 1 request each
+
+    You'd need to create 10 notes in 10 seconds to hit the limit. Most users create 1-2 notes per session.
+  </Accordion>
+  
+  <Accordion title="Editing Notes (10 per 10 seconds)">
+    **Normal usage:**
+    - Updating a note: 1 request
+    - Making multiple edits: 1 request per save
+
+    The edit form prevents rapid-fire saves (save button is disabled when unchanged), naturally spacing out requests.
+  </Accordion>
+  
+  <Accordion title="Deleting Notes (10 per 10 seconds)">
+    **Normal usage:**
+    - Deleting one note: 1 request
+    - Bulk deletion: Not currently supported
+
+    You'd need to delete 10 notes in 10 seconds, which requires clicking through 10 confirmation dialogs.
+  </Accordion>
+</AccordionGroup>
+
+<Info>
+  Rate limits are designed to be generous for normal usage while blocking abuse. If you're using Pad Notes normally, you'll likely never see a rate limit error.
+</Info>
+
+## What Counts Toward Limits?
+
+### Counted Requests
+
+- ✅ API calls to `/api/notes` endpoints
+- ✅ Each authenticated request from your user account
+- ✅ Requests from any device (all tied to your user ID)
+
+### Not Counted
+
+- ❌ Loading static pages (homepage, dashboard HTML)
+- ❌ Client-side search (no API calls)
+- ❌ Opening note modals (no API calls)
+- ❌ Failed authentication attempts (no user ID to track)
+- ❌ Asset loading (CSS, JavaScript, images)
+
+## Best Practices
+
+### For Normal Users
+
+1. **Use the search feature** instead of repeatedly fetching notes
+2. **Edit notes thoughtfully** rather than saving after every keystroke
+3. **Review before deleting** to avoid accidental deletions and retries
+
+### For Developers
+
+1. **Respect the `Retry-After` header** when building clients
+2. **Implement exponential backoff** for automated tools
+3. **Cache responses** when possible to reduce API calls
+4. **Use optimistic UI updates** to improve perceived performance
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="I'm being rate limited but using the app normally">
+    This is rare but can happen if:
+    - You have multiple browser tabs open, all making requests
+    - You're rapidly clicking buttons (wait for operations to complete)
+    - Browser extensions are making requests on your behalf
+
+    **Solution:** Close duplicate tabs and wait 10 seconds for the window to reset.
+  </Accordion>
+  
+  <Accordion title="Rate limit error won't go away">
+    If you consistently see rate limit errors:
+    - Clear your browser cache and cookies
+    - Sign out and sign back in
+    - Check for browser extensions that might be auto-refreshing
+    - Contact support if the issue persists
+  </Accordion>
+  
+  <Accordion title="Different limits for read vs write">
+    Yes, this is intentional:
+    - **Read operations** (30/10s) are less resource-intensive
+    - **Write operations** (10/10s) modify data and require more protection
+    
+    This allows you to browse notes freely while preventing write abuse.
+  </Accordion>
+</AccordionGroup>
+
+## Technical Details
+
+### Limit Check Performance
+
+Rate limit checks add minimal latency:
+
+1. **Redis lookup**: ~1-5ms for limit check
+2. **Atomic increment**: ~1-5ms to update count
+3. **Total overhead**: ~2-10ms per request
+
+This is negligible compared to database queries and authentication.
+
+### Redis Key Structure
+
+Upstash uses prefixed keys for organization:
+
+```typescript
+// From: client/src/lib/ratelimit.ts:15
+prefix: '@upstash/ratelimit/write',  // Write operations
+prefix: '@upstash/ratelimit/read',   // Read operations
+```
+
+Full key format: `@upstash/ratelimit/{type}:{userId}:{timestamp}`
+
+### Automatic Expiry
+
+Redis keys automatically expire after the window period:
+- Write limit keys expire after 10 seconds
+- Read limit keys expire after 10 seconds
+
+This prevents memory bloat and ensures accurate tracking.
+
+## Future Considerations
+
+### Potential Adjustments
+
+If usage patterns change, limits might be adjusted:
+
+- **Higher limits** for paid tiers (future feature)
+- **Stricter limits** if abuse is detected
+- **Dynamic limits** based on server load
+- **Different limits** for different operations (e.g., bulk actions)
+
+<Warning>
+  Rate limits are subject to change as the application evolves. Check this documentation for updates.
+</Warning>

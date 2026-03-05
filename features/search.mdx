@@ -1,0 +1,329 @@
+---
+title: 'Search'
+description: 'Find your notes quickly with real-time search and highlighting'
+icon: 'magnifying-glass'
+---
+
+Pad Notes includes a powerful, client-side search feature that helps you find notes instantly without waiting for server responses.
+
+## Search Interface
+
+### Opening Search
+
+Click the **search icon** in your dashboard to reveal the search bar:
+
+```jsx
+// From: client/src/components/filterSearch.jsx:40
+<button
+  onClick={handleClick}
+  className="rounded-md bg-cyan-600 px-1 py-0.5"
+>
+  <Search className='text-white'/>
+</button>
+```
+
+The search bar animates smoothly into view with a slide-in effect:
+
+```jsx
+// From: client/src/components/filterSearch.jsx:28
+<input
+  type="text"
+  className={`rounded-md bg-white py-1 pl-1 ${
+    barIsVisible ? 'w-full opacity-100' : 'w-0 opacity-0'
+  } transition-all duration-300 ease-in-out`}
+  placeholder="Nota a buscar"
+  onChange={(e) => setSearchText(e.target.value)}
+  value={searchText}
+/>
+```
+
+### Auto-Focus
+
+When the search bar opens, it automatically receives focus so you can start typing immediately:
+
+```jsx
+// From: client/src/components/filterSearch.jsx:8
+useEffect(() => {
+  if (barIsVisible && inputRef.current) {
+    inputRef.current.focus()
+  }
+}, [barIsVisible])
+```
+
+<Info>
+  Press **Escape** to close the search bar and clear focus.
+</Info>
+
+## Real-Time Filtering
+
+### Instant Results
+
+Search happens on the client side as you type - no server requests needed:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:85
+const filteredNotes = notes.filter((note) => {
+  if (searchTerm === '') return true
+  return (
+    note.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    note.textNote.toLowerCase().includes(searchTerm.toLowerCase())
+  )
+})
+```
+
+### Search Behavior
+
+<CardGroup cols={2}>
+  <Card title="Case Insensitive" icon="text-size">
+    Searching for "meeting" matches "Meeting", "MEETING", and "meeting"
+  </Card>
+  <Card title="Partial Matches" icon="scissors">
+    Searching for "call" matches "called", "calling", and "recall"
+  </Card>
+  <Card title="Multi-Field" icon="list">
+    Searches both note titles and content simultaneously
+  </Card>
+  <Card title="No Debounce" icon="bolt">
+    Results update instantly with every keystroke
+  </Card>
+</CardGroup>
+
+## Match Highlighting
+
+### Visual Feedback
+
+Pad Notes highlights search matches in yellow, making them easy to spot:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:28
+function highLightMatch(text, searchTerm) {
+  if (!searchTerm || searchTerm === '') return text
+
+  // Escape special regex characters
+  const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+  // Create case-insensitive global regex
+  const regex = new RegExp(`(${escapedSearchTerm})`, 'gi')
+
+  // Split and highlight matches
+  return text.split(regex).map((part, i) => {
+    if (part.toLowerCase() === searchTerm.toLowerCase()) {
+      return (
+        <mark key={i} className="rounded bg-yellow-200 px-0.5 dark:bg-yellow-700 dark:text-white">
+          {part}
+        </mark>
+      )
+    }
+    return part
+  })
+}
+```
+
+### Highlighting Locations
+
+Matches are highlighted in three places:
+
+1. **Note Card Title** (grid view)
+```jsx
+// From: client/src/components/NoteArticle.jsx:133
+<h2 className="self-start font-bold text-black uppercase md:text-xl dark:text-white">
+  {highLightMatch(note.title, searchTerm)}
+</h2>
+```
+
+2. **Note Card Preview** (grid view)
+```jsx
+// From: client/src/components/NoteArticle.jsx:136
+<p className="mb-2.5 w-full self-start overflow-hidden text-sm text-ellipsis whitespace-nowrap">
+  {highLightMatch(note.textNote.split('\n')[0], searchTerm)}
+  {note.textNote.includes('\n') ? '...' : ''}
+</p>
+```
+
+3. **Full Note Content** (modal view)
+```jsx
+// From: client/src/components/NoteArticle.jsx:209
+<h2 className="self-start text-xl font-bold text-black uppercase dark:text-white">
+  {highLightMatch(note.title, searchTerm)}
+</h2>
+<p className="my-4 self-start text-start break-words whitespace-pre-line text-black dark:text-white">
+  {highLightMatch(note.textNote, searchTerm)}
+</p>
+```
+
+<Info>
+  Highlighting works in both light and dark modes with appropriate color contrast.
+</Info>
+
+## Search Results Display
+
+### Result Count
+
+When searching, a count badge appears showing the number of matches:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:111
+{searchTerm && (
+  <div className="flex gap-2 self-end rounded-lg bg-[#e5e7eb] px-4 py-2 text-black md:text-lg dark:bg-[#2c2c2c] dark:text-white">
+    <span>
+      {filteredNotes.length}
+      {filteredNotes.length === 1 ? ' nota encontrada' : ' notas encontradas'}
+    </span>
+  </div>
+)}
+```
+
+The badge uses proper Spanish pluralization:
+- "1 nota encontrada" (singular)
+- "2 notas encontradas" (plural)
+
+### Clear Button
+
+A clear button appears when you're actively searching:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:104
+{searchTerm && (
+  <button
+    className="cursor-pointer rounded-lg border border-gray-300 bg-transparent px-2 py-1"
+    aria-label="Limpiar búsqueda"
+    onClick={() => setSearchTerm('')}
+  >
+    <Eraser className="w-6 text-black dark:text-white" />
+  </button>
+)}
+```
+
+### No Results State
+
+If your search doesn't match any notes, you'll see a helpful message:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:93
+if (filteredNotes.length === 0) {
+  return (
+    <p className="text-center text-xl text-black md:text-2xl dark:text-white">
+      No hay notas que coincidan con la búsqueda
+    </p>
+  )
+}
+```
+
+## Search Performance
+
+### Client-Side Benefits
+
+<CardGroup cols={2}>
+  <Card title="No Server Load" icon="server">
+    All filtering happens in your browser, reducing server requests
+  </Card>
+  <Card title="Instant Response" icon="gauge-high">
+    No network latency - results appear as you type
+  </Card>
+  <Card title="Offline Capable" icon="wifi-slash">
+    Search works even if your connection is slow or interrupted
+  </Card>
+  <Card title="No Rate Limits" icon="infinity">
+    Search as many times as you want without hitting API limits
+  </Card>
+</CardGroup>
+
+### Regex Escaping
+
+The search function safely handles special characters that could break regex:
+
+```jsx
+// From: client/src/components/NoteArticle.jsx:33
+const escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+```
+
+This means you can search for:
+- Parentheses: `(meeting notes)`
+- Brackets: `[TODO]`
+- Question marks: `What?`
+- Periods: `Dr. Smith`
+
+## Search Tips
+
+<AccordionGroup>
+  <Accordion title="Search by date keywords">
+    Include words like "today", "yesterday", "Monday" in your notes, then search for them:
+    - "notes from Monday"
+    - "meeting today"
+    - "deadline tomorrow"
+  </Accordion>
+  
+  <Accordion title="Use distinctive keywords">
+    Add unique tags or keywords to notes:
+    - "#work" or "#personal"
+    - "@john" for notes about specific people
+    - "URGENT" or "TODO" for priority items
+  </Accordion>
+  
+  <Accordion title="Search fragments">
+    You don't need to type the full word:
+    - "meet" will find "meeting", "meetings", "meet"
+    - "proj" will find "project", "projection"
+  </Accordion>
+  
+  <Accordion title="Check both title and content">
+    The search looks in both fields, so a note titled "Work" with content "meeting notes" will match searches for "work" OR "meeting".
+  </Accordion>
+</AccordionGroup>
+
+## Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| **Click search icon** | Open search bar and focus input |
+| **Escape** | Close search bar |
+| **Click clear button** | Clear search term and show all notes |
+
+<Info>
+  The search input automatically loses focus when you click outside of it (onBlur event).
+</Info>
+
+## Search Limitations
+
+### Client-Side Only
+
+Search only works on notes that are already loaded in your browser:
+
+- All your notes are fetched on page load
+- Search cannot find notes you haven't created yet
+- Search doesn't work across multiple users (notes are private)
+
+### Memory Considerations
+
+Since search happens client-side, all notes must be in browser memory:
+
+```jsx
+// From: client/src/components/ListNotes.jsx:30
+const response = await fetch('/api/notes')
+const data = await response.json()
+setNotes(data.data || [])  // All notes loaded at once
+```
+
+This works well for personal note-taking apps where users typically have dozens to hundreds of notes, not thousands.
+
+### No Advanced Operators
+
+The search currently doesn't support:
+- Boolean operators (AND, OR, NOT)
+- Exact phrase matching ("quotes")
+- Wildcard characters (* or ?)
+- Regular expression queries
+
+<Warning>
+  If you need to search very large note collections or use advanced search operators, consider requesting a server-side search feature.
+</Warning>
+
+## Future Enhancements
+
+Potential improvements to the search feature:
+
+- **Search history**: Remember recent searches
+- **Fuzzy matching**: Find results even with typos
+- **Search within date ranges**: Filter by creation/update date
+- **Tag-based search**: Dedicated tag system for organization
+- **Sort by relevance**: Rank results by match quality

@@ -1,0 +1,179 @@
+---
+title: 'API Overview'
+description: 'Learn how to interact with the Pad Notes API'
+---
+
+## Introduction
+
+The Pad Notes API provides a RESTful interface for managing notes in your Pad Notes application. All API endpoints require authentication and are subject to rate limiting to ensure fair usage.
+
+## Base URL
+
+```
+https://your-domain.com/api
+```
+
+All API endpoints are relative to this base URL.
+
+## Authentication
+
+Pad Notes uses [Clerk](https://clerk.com) for authentication. All API requests must include a valid authentication token in the request headers.
+
+### Authentication Flow
+
+1. Users authenticate through Clerk's authentication system
+2. The authentication session is managed via HTTP-only cookies
+3. Each API request validates the session through `locals.auth()`
+4. Unauthenticated requests receive a `401 Unauthorized` response
+
+### Example Authenticated Request
+
+```bash
+curl -X GET https://your-domain.com/api/notes \
+  -H "Cookie: __session=your-session-token"
+```
+
+## Rate Limiting
+
+Pad Notes implements rate limiting using [Upstash Redis](https://upstash.com) with a sliding window algorithm to protect against abuse.
+
+### Rate Limit Policies
+
+<ParamField path="Read Operations" type="limit">
+  **30 requests per 10 seconds** per user
+  
+  Applies to:
+  - `GET /api/notes` - List notes
+</ParamField>
+
+<ParamField path="Write Operations" type="limit">
+  **10 requests per 10 seconds** per user
+  
+  Applies to:
+  - `POST /api/notes` - Create note
+  - `PUT /api/notes/[id]` - Update note
+  - `DELETE /api/notes/[id]` - Delete note
+</ParamField>
+
+### Rate Limit Headers
+
+When a rate limit is exceeded, the API returns a `429 Too Many Requests` response with the following headers:
+
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 8
+}
+```
+
+The response includes:
+- `Retry-After` header: Seconds until the rate limit resets
+- `retryAfter` field: Same value in the response body
+
+## HTTP Status Codes
+
+The API uses standard HTTP status codes to indicate success or failure:
+
+| Status Code | Description |
+|-------------|-------------|
+| `200` | Success - Request completed successfully |
+| `201` | Created - Resource created successfully |
+| `400` | Bad Request - Invalid parameters or validation error |
+| `401` | Unauthorized - Authentication required |
+| `404` | Not Found - Resource not found or user doesn't own it |
+| `429` | Too Many Requests - Rate limit exceeded |
+| `500` | Internal Server Error - Server-side error |
+
+## Error Responses
+
+All error responses follow a consistent JSON format:
+
+### Authentication Error
+
+```json
+{
+  "error": "No autenticado"
+}
+```
+
+### Validation Error
+
+```json
+{
+  "error": "Datos inválidos",
+  "details": {
+    "title": ["String must contain at least 3 character(s)"],
+    "textNote": ["String must contain at least 3 character(s)"]
+  }
+}
+```
+
+### Rate Limit Error
+
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 8
+}
+```
+
+### Server Error
+
+```json
+{
+  "error": "Error del servidor"
+}
+```
+
+### Not Found Error
+
+```json
+{
+  "error": "Nota no encontrada"
+}
+```
+
+## Request Format
+
+All `POST` and `PUT` requests must include a `Content-Type: application/json` header and send data as JSON in the request body.
+
+```bash
+curl -X POST https://your-domain.com/api/notes \
+  -H "Content-Type: application/json" \
+  -H "Cookie: __session=your-session-token" \
+  -d '{"title":"My Note","textNote":"Note content"}'
+```
+
+## Response Format
+
+All successful responses return JSON with a `data` field containing the result:
+
+```json
+{
+  "data": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "title": "My Note",
+    "textNote": "Note content",
+    "userId": "user_2abc123",
+    "createdAt": "2026-03-05T10:30:00.000Z",
+    "updatedAt": "2026-03-05T10:30:00.000Z"
+  }
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="List Notes" icon="list" href="/api/notes/list">
+    Retrieve all notes for the authenticated user
+  </Card>
+  <Card title="Create Note" icon="plus" href="/api/notes/create">
+    Create a new note
+  </Card>
+  <Card title="Update Note" icon="pen" href="/api/notes/update">
+    Update an existing note
+  </Card>
+  <Card title="Delete Note" icon="trash" href="/api/notes/delete">
+    Delete a note
+  </Card>
+</CardGroup>

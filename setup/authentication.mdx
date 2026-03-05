@@ -1,0 +1,192 @@
+---
+title: 'Authentication'
+description: 'Configure Clerk authentication for Pad Notes with OAuth providers'
+---
+
+## Overview
+
+Pad Notes uses [Clerk](https://clerk.com) for authentication and user management. Clerk provides secure, customizable authentication with support for multiple OAuth providers.
+
+## Prerequisites
+
+- A Clerk account (sign up at [clerk.com](https://clerk.com))
+- Completed [Installation](/setup/installation)
+
+## Setup Steps
+
+<Steps>
+  <Step title="Create a Clerk application">
+    1. Go to the [Clerk Dashboard](https://dashboard.clerk.com)
+    2. Click **Create application**
+    3. Name your application "Pad Notes"
+    4. Select your preferred authentication methods (Email, Google, GitHub, etc.)
+    5. Click **Create application**
+  </Step>
+
+  <Step title="Get your API keys">
+    After creating your application, Clerk will show you your API keys:
+
+    - **Publishable Key** - Safe to expose in client-side code
+    - **Secret Key** - Keep this private, never expose in client code
+
+    Copy both keys for the next step.
+  </Step>
+
+  <Step title="Add environment variables">
+    Add your Clerk credentials to your `.env` file:
+
+    ```bash .env
+    PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
+    CLERK_SECRET_KEY=sk_test_...
+    ```
+
+    <Warning>
+      The `PUBLIC_CLERK_PUBLISHABLE_KEY` must start with `PUBLIC_` to be accessible in Astro client-side code.
+    </Warning>
+  </Step>
+
+  <Step title="Configure OAuth providers (optional)">
+    To enable OAuth providers like Google or GitHub:
+
+    1. In the Clerk Dashboard, go to **User & Authentication** → **Social Connections**
+    2. Enable your desired providers (Google, GitHub, Microsoft, etc.)
+    3. Follow provider-specific setup instructions
+    4. Configure OAuth callback URLs
+
+    <Note>
+      For local development, Clerk provides default OAuth credentials. For production, you'll need to set up your own OAuth applications.
+    </Note>
+  </Step>
+</Steps>
+
+## Integration Details
+
+### Astro Configuration
+
+Pad Notes integrates Clerk in `astro.config.mjs`:
+
+```javascript astro.config.mjs
+import clerk from '@clerk/astro'
+import { esMX } from '@clerk/localizations'
+
+export default defineConfig({
+  integrations: [
+    clerk({
+      localization: esMX,  // Spanish (Mexico) localization
+    }),
+  ],
+})
+```
+
+### Middleware Protection
+
+The authentication middleware in `src/middleware.ts` protects routes:
+
+```typescript src/middleware.ts
+import { clerkMiddleware, createRouteMatcher } from '@clerk/astro/server'
+
+const isProtectedRoute = createRouteMatcher(['/dashboard', '/api/notes(.*)'])
+
+export const onRequest = clerkMiddleware((auth, context) => {
+  const { userId, redirectToSignIn } = auth()
+  const { pathname } = new URL(context.request.url)
+
+  if (userId && pathname === '/') {
+    return context.redirect('/dashboard')
+  }
+
+  if (isProtectedRoute(context.request) && !userId) {
+    return redirectToSignIn()
+  }
+})
+```
+
+This middleware:
+- Redirects authenticated users from `/` to `/dashboard`
+- Protects `/dashboard` and all `/api/notes/*` routes
+- Redirects unauthenticated users to the sign-in page
+
+### Using Authentication in API Routes
+
+Access user authentication state in your API routes:
+
+```typescript src/pages/api/notes/index.ts
+export const GET: APIRoute = async ({ locals }) => {
+  const { userId, isAuthenticated } = locals.auth()
+
+  if (!isAuthenticated) {
+    return new Response(JSON.stringify({ error: 'No autenticado' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  // Fetch user-specific notes using userId
+  const userNotes = await db
+    .select()
+    .from(notes)
+    .where(eq(notes.userId, userId))
+
+  return new Response(JSON.stringify({ data: userNotes }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+```
+
+## Localization
+
+Pad Notes uses Spanish (Mexico) localization by default. To change the language:
+
+```javascript astro.config.mjs
+import { enUS, esES, frFR } from '@clerk/localizations'
+
+clerk({
+  localization: enUS,  // English (US)
+  // or esES for Spanish (Spain)
+  // or frFR for French
+})
+```
+
+Available localizations are documented in the [@clerk/localizations package](https://www.npmjs.com/package/@clerk/localizations).
+
+## Testing Authentication
+
+<Steps>
+  <Step title="Start the development server">
+    ```bash
+    pnpm dev
+    ```
+  </Step>
+
+  <Step title="Navigate to your app">
+    Open `http://localhost:4321` in your browser.
+  </Step>
+
+  <Step title="Test sign-up flow">
+    1. Try accessing `/dashboard` - you should be redirected to sign-in
+    2. Create a new account using email or OAuth
+    3. After authentication, you should land on the dashboard
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+### "Clerk: Missing publishable key"
+
+Ensure your environment variable is named `PUBLIC_CLERK_PUBLISHABLE_KEY` (with the `PUBLIC_` prefix) and that you've restarted your dev server after adding it.
+
+### OAuth redirect URI mismatch
+
+In your Clerk Dashboard, verify that your OAuth callback URLs match your development/production domains:
+- Development: `http://localhost:4321`
+- Production: `https://your-domain.com`
+
+### Users not persisting after refresh
+
+Check that your `CLERK_SECRET_KEY` is set correctly and that cookies are enabled in your browser.
+
+## Next Steps
+
+- [Database Setup](/setup/database) - Configure Turso to store user notes
+- [Rate Limiting](/setup/rate-limiting) - Protect your API with rate limits

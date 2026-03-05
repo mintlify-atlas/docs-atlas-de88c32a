@@ -1,0 +1,160 @@
+---
+title: 'List Notes'
+api: 'GET /api/notes'
+description: 'Retrieve all notes for the authenticated user'
+---
+
+## Endpoint
+
+```
+GET /api/notes
+```
+
+Retrieves all notes belonging to the authenticated user, ordered by most recently updated first.
+
+## Authentication
+
+This endpoint requires authentication via Clerk. The user must have a valid session.
+
+## Rate Limiting
+
+This is a **read operation** with a rate limit of **30 requests per 10 seconds** per user.
+
+## Request
+
+No parameters required. The endpoint automatically filters notes by the authenticated user's ID.
+
+### Example Request
+
+```bash
+curl -X GET https://your-domain.com/api/notes \
+  -H "Cookie: __session=your-session-token"
+```
+
+## Response
+
+<ResponseField name="data" type="array" required>
+  Array of note objects
+  
+  <Expandable title="Note Object">
+    <ResponseField name="id" type="string" required>
+      UUID of the note
+    </ResponseField>
+    
+    <ResponseField name="title" type="string" required>
+      Title of the note (3-100 characters)
+    </ResponseField>
+    
+    <ResponseField name="textNote" type="string" required>
+      Content of the note (3-400 characters)
+    </ResponseField>
+    
+    <ResponseField name="userId" type="string" required>
+      Clerk user ID of the note owner
+    </ResponseField>
+    
+    <ResponseField name="createdAt" type="timestamp" required>
+      Unix timestamp when the note was created
+    </ResponseField>
+    
+    <ResponseField name="updatedAt" type="timestamp" required>
+      Unix timestamp when the note was last updated
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Success Response (200)
+
+```json
+{
+  "data": [
+    {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "title": "Meeting Notes",
+      "textNote": "Discussed Q1 goals and team objectives for the upcoming quarter.",
+      "userId": "user_2abc123def456",
+      "createdAt": "2026-03-05T09:15:00.000Z",
+      "updatedAt": "2026-03-05T14:30:00.000Z"
+    },
+    {
+      "id": "987f6543-e21b-34d5-b678-123456789abc",
+      "title": "Shopping List",
+      "textNote": "Milk, eggs, bread, coffee, and fruits for the week.",
+      "userId": "user_2abc123def456",
+      "createdAt": "2026-03-04T16:20:00.000Z",
+      "updatedAt": "2026-03-04T16:20:00.000Z"
+    }
+  ]
+}
+```
+
+### Empty Result (200)
+
+When a user has no notes, the endpoint returns an empty array:
+
+```json
+{
+  "data": []
+}
+```
+
+## Error Responses
+
+### Unauthorized (401)
+
+Returned when the request is not authenticated:
+
+```json
+{
+  "error": "No autenticado"
+}
+```
+
+### Rate Limit Exceeded (429)
+
+Returned when the user exceeds 30 requests per 10 seconds:
+
+```json
+{
+  "error": "Demasiadas solicitudes, intenta en unos segundos",
+  "retryAfter": 7
+}
+```
+
+Headers include:
+- `Retry-After`: Seconds until the rate limit resets
+
+### Server Error (500)
+
+Returned when an unexpected server error occurs:
+
+```json
+{
+  "error": "Error del servidor"
+}
+```
+
+## Implementation Details
+
+### Database Query
+
+The endpoint executes the following query:
+
+```typescript
+db.select()
+  .from(notes)
+  .where(eq(notes.userId, userId))
+  .orderBy(desc(notes.updatedAt))
+```
+
+### Sorting
+
+Notes are automatically sorted by `updatedAt` in descending order (most recently updated first). This ensures that the user's most active notes appear at the top of the list.
+
+### Performance
+
+The database includes an index on `userId` (`user_id_idx`) to optimize query performance for retrieving user-specific notes.
+
+## Code Reference
+
+Implementation: `/home/daytona/workspace/source/client/src/pages/api/notes/index.ts:9`
