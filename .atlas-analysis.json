@@ -1,0 +1,92 @@
+{
+  "projectType": "saas",
+  "projectName": "Pad Notes",
+  "projectDescription": "A modern web application for creating and managing personal notes with secure authentication and rate limiting.",
+  "theme": "almond",
+  "primaryColor": "#6C47FF",
+  "lightColor": "#8B68FF",
+  "darkColor": "#5530E0",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Setup",
+            "pages": [
+              "setup/installation",
+              "setup/authentication",
+              "setup/database",
+              "setup/rate-limiting",
+              "setup/deployment"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/authentication",
+              "features/notes-management",
+              "features/search",
+              "features/rate-limiting"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/stack",
+              "architecture/database-schema",
+              "architecture/middleware"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/overview",
+              "api/notes/list",
+              "api/notes/create",
+              "api/notes/update",
+              "api/notes/delete"
+            ]
+          },
+          {
+            "group": "Schema",
+            "pages": [
+              "api/schemas/note",
+              "api/schemas/validation"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Clerk authentication with Google OAuth and email/password",
+    "CRUD operations for personal notes with user isolation",
+    "Rate limiting with Upstash Redis (30 reads/10s, 10 writes/10s)",
+    "Zod schema validation for type-safe data handling",
+    "Turso edge database with Drizzle ORM",
+    "Real-time search with match highlighting",
+    "Responsive design with Tailwind CSS 4",
+    "Protected routes with middleware"
+  ],
+  "publicApiSurface": [
+    "GET /api/notes - List all notes for authenticated user",
+    "POST /api/notes - Create a new note",
+    "PUT /api/notes/[id] - Update existing note",
+    "DELETE /api/notes/[id] - Delete a note",
+    "/dashboard - Protected dashboard page",
+    "/ - Public landing page with authentication"
+  ]
+}
